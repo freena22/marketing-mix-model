@@ -2,7 +2,7 @@
 
 A full-stack Marketing Mix Model (MMM) for a simulated DTC retail e-commerce brand (**ShopNova**), built from scratch in Python with an interactive React dashboard. The model estimates channel-level incremental contribution, identifies diminishing returns, and optimizes budget allocation — projecting a **+24.4% revenue lift** without increasing total spend.
 
-**Live Dashboard:** [View on GitHub Pages →](#) *(coming soon)*
+**Live Dashboard:** [View on GitHub Pages →](https://freena22.github.io/marketing-mix-model/)
 
 ---
 
