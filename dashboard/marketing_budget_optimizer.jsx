@@ -1,0 +1,1106 @@
+import { useState, useMemo } from "react";
+import {
+  BarChart, Bar, LineChart, Line, AreaChart, Area,
+  XAxis, YAxis, Tooltip, Legend, ResponsiveContainer,
+  PieChart, Pie, Cell, CartesianGrid, ReferenceLine,
+  ComposedChart,
+} from "recharts";
+
+// ═══════════════════════════════════════════════════════
+// DESIGN SYSTEM — Muted, premium consulting aesthetic
+// ═══════════════════════════════════════════════════════
+
+const DS = {
+  // Core palette — low saturation, high sophistication
+  bg: "#F7F6F3",          // warm off-white
+  surface: "#FFFFFF",
+  surfaceAlt: "#F0EFEB",
+  border: "#E5E2DB",
+  borderLight: "#EDEAE4",
+
+  // Text hierarchy
+  text: {
+    primary: "#2C2C2C",
+    secondary: "#6B6B6B",
+    tertiary: "#9B9B9B",
+    inverse: "#FAFAF8",
+  },
+
+  // Chart palette — refined with moderate saturation
+  channels: {
+    "Paid Search":    "#4A7FA5",  // medium steel blue
+    "Paid Social":    "#7E6BAF",  // soft purple
+    "Display":        "#D4A24E",  // warm amber
+    "Email":          "#4E9A6D",  // medium sage
+    "TV / OTT":       "#C45B4F",  // warm red clay
+    "Affiliate":      "#D48A52",  // burnt orange
+    "Organic Search": "#8C8C8C",  // neutral
+    "Direct":         "#B0B0B0",  // light neutral
+  },
+
+  // Semantic
+  accent: "#4A7FA5",
+  positive: "#4E9A6D",
+  negative: "#C45B4F",
+  warning: "#D4A24E",
+  highlight: "#2D6A85",
+
+  // Typography
+  font: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+  mono: "'SF Mono', 'Fira Code', 'Consolas', monospace",
+
+  radius: { sm: 6, md: 10, lg: 14 },
+};
+
+// ═══════════════════════════════════════════════════════
+// DATA
+// ═══════════════════════════════════════════════════════
+
+const META = {
+  brand: "ShopNova",
+  brandSub: "DTC Retail E-commerce",
+  period: "Jan 2024 – Dec 2025",
+  weeks: 104,
+  r2: 0.9929,
+  totalRevenue: 85222474,
+  totalSpend: 19248759,
+  roas: 4.43,
+  weeklyBudget: 175000,
+  liftPct: 24.4,
+};
+
+const CHANNELS = ["Paid Search","Paid Social","Display","Email","TV / OTT","Affiliate"];
+const ALL_CHANNELS = [...CHANNELS, "Organic Search", "Direct"];
+
+const CHANNEL_STATS = {
+  "Paid Search":    { totalSpend:4865168, avgSpend:46780, totalContrib:15745633, share:0.1848, roi:3.24, satK:80000, saturation:0.439, beta:320, spendShare:0.2528 },
+  "Paid Social":    { totalSpend:3909065, avgSpend:37587, totalContrib:13188937, share:0.1548, roi:3.37, satK:65000, saturation:0.435, beta:260, spendShare:0.2031 },
+  "Display":        { totalSpend:2237506, avgSpend:21514, totalContrib:6116692,  share:0.0718, roi:2.73, satK:55000, saturation:0.320, beta:140, spendShare:0.1162 },
+  "Email":          { totalSpend:891544,  avgSpend:8573,  totalContrib:11371960, share:0.1334, roi:12.76, satK:18000, saturation:0.375, beta:280, spendShare:0.0463 },
+  "TV / OTT":       { totalSpend:6022449, avgSpend:57908, totalContrib:9075834,  share:0.1065, roi:1.51, satK:130000, saturation:0.353, beta:180, spendShare:0.3129 },
+  "Affiliate":      { totalSpend:1323028, avgSpend:12721, totalContrib:9552624,  share:0.1121, roi:7.22, satK:28000, saturation:0.359, beta:240, spendShare:0.0688 },
+  "Organic Search": { totalSpend:0, avgSpend:0, totalContrib:3497684, share:0.041, roi:0, satK:0, saturation:0, beta:0, spendShare:0 },
+  "Direct":         { totalSpend:0, avgSpend:0, totalContrib:4290764, share:0.050, roi:0, satK:0, saturation:0, beta:0, spendShare:0 },
+};
+
+const SCENARIOS = [
+  { name:"Current Allocation", tag:"baseline", budget:175000, weeklyContrib:534821, vsPct:0,
+    alloc:{"Paid Search":45000,"Paid Social":35000,"Display":20000,"Email":8000,"TV / OTT":55000,"Affiliate":12000} },
+  { name:"AI-Optimized", tag:"recommended", budget:175000, weeklyContrib:665465, vsPct:24.4,
+    alloc:{"Paid Search":38500,"Paid Social":28000,"Display":12250,"Email":29138,"TV / OTT":38500,"Affiliate":28612} },
+  { name:"Growth +20%", tag:"growth", budget:210000, weeklyContrib:741643, vsPct:38.7,
+    alloc:{"Paid Search":46200,"Paid Social":33600,"Display":14700,"Email":33637,"TV / OTT":46200,"Affiliate":35663} },
+  { name:"Efficiency -15%", tag:"efficiency", budget:148750, weeklyContrib:600097, vsPct:12.2,
+    alloc:{"Paid Search":32725,"Paid Social":23800,"Display":10413,"Email":25750,"TV / OTT":32725,"Affiliate":23337} },
+];
+
+// ── Model-Derived Baseline ──
+// Baseline = Model Intercept + Trend + Seasonality (extracted from regression coefficients)
+// This is NOT an assumption — it's a model output. The regression decomposes total revenue into
+// (a) control variables (intercept + trend + seasonality + holiday) = baseline
+// (b) media variables (channel spend with saturation + adstock transforms) = incremental
+// Baseline represents expected revenue with zero media spend.
+const BASELINE = {
+  meanWeekly: 132779,        // average baseline across 104 weeks
+  intercept: 108122,         // model intercept (constant weekly floor)
+  trendStart: 108122,        // baseline at week 0 (intercept only)
+  trendEnd: 133998,          // baseline at week 104 (intercept + full trend)
+  trendAnnualGrowthPct: 51.2,// trend growth rate (driven by brand equity compounding)
+  shareOfTotal: 0.162,       // baseline share of total predicted revenue (16.2%)
+  mediaShareOfTotal: 0.838,  // media share of total predicted revenue (83.8%)
+  seasonalityAmplitude: 45085, // peak seasonal swing (Nov/Dec holiday lift)
+  components: {
+    intercept: 108122,
+    trendCoef: 25875,
+    sin52Coef: 12108,
+    cos52Coef: -4465,
+    novCoef: 60399,
+    decCoef: 81731,
+  },
+};
+
+// Generate pure saturation response curve for each channel
+// Shows channel's incremental revenue contribution as a function of spend
+function genSatCurve(beta, satK, maxSpend) {
+  const pts = [];
+  const steps = 50;
+  for (let i = 0; i <= steps; i++) {
+    const s = maxSpend * i / steps;
+    const channelResponse = Math.round(beta * (1 - Math.exp(-s / satK)) * 1000);
+    pts.push({
+      spend: Math.round(s),
+      response: channelResponse,
+      withBaseline: channelResponse + BASELINE.meanWeekly,
+      baseline: BASELINE.meanWeekly,
+    });
+  }
+  return pts;
+}
+const SAT_CURVES = {};
+CHANNELS.forEach(ch => {
+  const s = CHANNEL_STATS[ch];
+  SAT_CURVES[ch] = genSatCurve(s.beta, s.satK, s.avgSpend * 3.5);
+});
+
+// ── Weekly Revenue Decomposition (bi-weekly sample, 52 points) ──
+// Baseline = model intercept + trend + seasonality (from regression coefficients)
+// Each channel = fitted media contribution at actual spend levels
+const WEEKLY_DECOMP = [
+  {w:1,bl:103657,ps:135146,sc:112397,dp:44804,em:105408,tv:79891,af:40150},
+  {w:3,bl:107187,ps:148152,sc:162207,dp:79599,em:117368,tv:105227,af:68004},
+  {w:5,bl:110800,ps:134730,sc:137306,dp:66225,em:107392,tv:98872,af:66490},
+  {w:7,bl:114316,ps:165244,sc:95304,dp:62557,em:101586,tv:107348,af:44941},
+  {w:9,bl:117560,ps:129301,sc:132571,dp:60464,em:98231,tv:89620,af:84981},
+  {w:11,bl:120372,ps:149368,sc:154083,dp:58344,em:99543,tv:94773,af:102493},
+  {w:13,bl:122619,ps:160833,sc:152308,dp:62862,em:97985,tv:87992,af:90353},
+  {w:15,bl:124198,ps:110068,sc:159496,dp:52844,em:122868,tv:107257,af:74959},
+  {w:17,bl:125047,ps:128254,sc:159015,dp:49389,em:116751,tv:67736,af:73086},
+  {w:19,bl:125146,ps:132767,sc:164638,dp:66032,em:107018,tv:73922,af:104602},
+  {w:21,bl:124518,ps:173179,sc:151711,dp:53630,em:107457,tv:107234,af:102096},
+  {w:23,bl:123230,ps:151779,sc:134701,dp:63432,em:121623,tv:109811,af:96691},
+  {w:25,bl:121385,ps:137961,sc:145943,dp:61232,em:93879,tv:63357,af:43816},
+  {w:27,bl:119119,ps:129050,sc:117986,dp:56686,em:113946,tv:91575,af:98001},
+  {w:29,bl:116594,ps:140914,sc:128195,dp:69361,em:94150,tv:62310,af:95941},
+  {w:31,bl:113986,ps:140082,sc:132369,dp:59311,em:112332,tv:69610,af:90880},
+  {w:33,bl:111475,ps:155496,sc:137924,dp:65827,em:100641,tv:95466,af:108865},
+  {w:35,bl:109236,ps:165515,sc:159290,dp:59728,em:84846,tv:81012,af:96722},
+  {w:37,bl:107428,ps:154909,sc:148950,dp:68471,em:96291,tv:84617,af:81863},
+  {w:39,bl:106187,ps:123612,sc:124333,dp:57856,em:114070,tv:82464,af:97018},
+  {w:41,bl:105613,ps:180328,sc:165538,dp:56253,em:134813,tv:86176,af:105006},
+  {w:43,bl:105769,ps:168728,sc:147368,dp:73974,em:122179,tv:92956,af:117478},
+  {w:45,bl:167073,ps:159096,sc:180656,dp:73196,em:133054,tv:89911,af:127641},
+  {w:47,bl:168705,ps:177139,sc:182965,dp:84955,em:138999,tv:120408,af:78526},
+  {w:49,bl:192331,ps:200254,sc:178934,dp:71446,em:148298,tv:104825,af:87654},
+  {w:51,bl:195181,ps:197479,sc:192238,dp:77780,em:142487,tv:113021,af:118674},
+  {w:53,bl:198451,ps:185404,sc:208724,dp:85147,em:152089,tv:120411,af:125492},
+  {w:55,bl:120250,ps:164914,sc:122300,dp:63936,em:106100,tv:114376,af:99339},
+  {w:57,bl:123863,ps:130570,sc:124556,dp:44379,em:104523,tv:84412,af:86789},
+  {w:59,bl:127380,ps:150917,sc:160285,dp:47468,em:102953,tv:53629,af:59186},
+  {w:61,bl:130624,ps:138434,sc:154720,dp:50856,em:125935,tv:107359,af:93273},
+  {w:63,bl:133436,ps:146149,sc:173269,dp:64492,em:149498,tv:95469,af:108830},
+  {w:65,bl:135682,ps:178022,sc:162040,dp:60862,em:131916,tv:128196,af:105565},
+  {w:67,bl:137261,ps:160577,sc:138189,dp:69673,em:144472,tv:106257,af:87353},
+  {w:69,bl:138110,ps:166783,sc:149921,dp:65942,em:99571,tv:72755,af:106557},
+  {w:71,bl:138209,ps:164365,sc:158606,dp:60960,em:77545,tv:83791,af:94848},
+  {w:73,bl:137582,ps:161585,sc:156231,dp:61852,em:101522,tv:79328,af:102038},
+  {w:75,bl:136293,ps:110746,sc:153681,dp:69043,em:119547,tv:107426,af:111760},
+  {w:77,bl:134448,ps:162668,sc:169803,dp:60144,em:129864,tv:100160,af:90308},
+  {w:79,bl:132183,ps:161595,sc:135963,dp:55500,em:100184,tv:102574,af:86751},
+  {w:81,bl:129658,ps:153375,sc:152592,dp:67938,em:94234,tv:109398,af:108150},
+  {w:83,bl:127049,ps:185601,sc:164224,dp:61998,em:133670,tv:87669,af:108609},
+  {w:85,bl:124538,ps:146156,sc:142596,dp:61466,em:87322,tv:83656,af:104644},
+  {w:87,bl:122299,ps:176108,sc:145428,dp:69627,em:115127,tv:99746,af:86025},
+  {w:89,bl:120492,ps:153505,sc:161518,dp:62252,em:91416,tv:88287,af:62728},
+  {w:91,bl:119250,ps:164983,sc:156857,dp:69345,em:116000,tv:90357,af:108837},
+  {w:93,bl:118676,ps:167841,sc:158838,dp:71914,em:122672,tv:87027,af:111358},
+  {w:95,bl:118832,ps:172695,sc:174140,dp:68244,em:114835,tv:99558,af:139609},
+  {w:97,bl:180136,ps:195405,sc:188184,dp:77963,em:143237,tv:105771,af:119672},
+  {w:99,bl:181768,ps:195567,sc:201812,dp:80687,em:151932,tv:110173,af:126118},
+  {w:101,bl:205394,ps:183298,sc:181479,dp:79310,em:129305,tv:106618,af:114263},
+  {w:103,bl:208244,ps:199608,sc:201511,dp:84032,em:155599,tv:124948,af:148489},
+];
+
+// Pre-compute stacked values for the decomposition chart
+const DECOMP_STACKED = WEEKLY_DECOMP.map(d => {
+  const weekLabel = `W${d.w}`;
+  // Stack order: baseline at bottom, then channels by size
+  return {
+    week: weekLabel,
+    "Baseline": d.bl,
+    "Paid Search": d.ps,
+    "Paid Social": d.sc,
+    "Display": d.dp,
+    "Email": d.em,
+    "TV / OTT": d.tv,
+    "Affiliate": d.af,
+  };
+});
+
+const MONTHLY = [
+  {m:"Jan '24",rev:3576693,spend:862928},{m:"Feb '24",rev:2774441,spend:626084},{m:"Mar '24",rev:3211674,spend:756155},
+  {m:"Apr '24",rev:3643297,spend:706939},{m:"May '24",rev:3030568,spend:694547},{m:"Jun '24",rev:2927824,spend:613500},
+  {m:"Jul '24",rev:3660599,spend:771657},{m:"Aug '24",rev:3068677,spend:664405},{m:"Sep '24",rev:3672888,spend:790914},
+  {m:"Oct '24",rev:3292355,spend:759494},{m:"Nov '24",rev:3760364,spend:916539},{m:"Dec '24",rev:5180773,spend:1225839},
+  {m:"Jan '25",rev:3010733,spend:550229},{m:"Feb '25",rev:2996389,spend:701801},{m:"Mar '25",rev:4461022,spend:1042609},
+  {m:"Apr '25",rev:3201705,spend:652436},{m:"May '25",rev:3236938,spend:775379},{m:"Jun '25",rev:4124039,spend:933596},
+  {m:"Jul '25",rev:3316263,spend:720442},{m:"Aug '25",rev:3186662,spend:719805},{m:"Sep '25",rev:4069692,spend:912511},
+  {m:"Oct '25",rev:3405096,spend:818622},{m:"Nov '25",rev:4124839,spend:989545},{m:"Dec '25",rev:4288943,spend:1042781},
+];
+
+// ═══════════════════════════════════════════════════════
+// UTILITIES
+// ═══════════════════════════════════════════════════════
+
+const fmt = (n, prefix="$") => {
+  if (Math.abs(n) >= 1e6) return `${prefix}${(n/1e6).toFixed(1)}M`;
+  if (Math.abs(n) >= 1e3) return `${prefix}${(n/1e3).toFixed(0)}K`;
+  return `${prefix}${n.toFixed(0)}`;
+};
+const fmtPct = n => `${n >= 0 ? "+" : ""}${n.toFixed(1)}%`;
+
+const ChartTooltip = ({ active, payload, label }) => {
+  if (!active || !payload?.length) return null;
+  return (
+    <div style={{ background: "#2C2C2C", borderRadius: 8, padding: "10px 14px", color: "#FAFAF8",
+      fontSize: 12, fontFamily: DS.font, boxShadow: "0 4px 20px rgba(0,0,0,0.15)" }}>
+      <div style={{ fontWeight: 600, marginBottom: 6, color: "#9B9B9B", fontSize: 11, letterSpacing: 0.3 }}>{label}</div>
+      {payload.map((p, i) => (
+        <div key={i} style={{ display: "flex", justifyContent: "space-between", gap: 20, padding: "2px 0" }}>
+          <span style={{ color: p.color || "#FAFAF8" }}>{p.name}</span>
+          <span style={{ fontWeight: 600, fontFamily: DS.mono }}>{typeof p.value === "number" ? fmt(p.value) : p.value}</span>
+        </div>
+      ))}
+    </div>
+  );
+};
+
+// ═══════════════════════════════════════════════════════
+// SHARED COMPONENTS
+// ═══════════════════════════════════════════════════════
+
+const Card = ({ children, style }) => (
+  <div style={{ background: DS.surface, borderRadius: DS.radius.lg, padding: 28, border: `1px solid ${DS.border}`, ...style }}>
+    {children}
+  </div>
+);
+
+const SectionTitle = ({ children, sub }) => (
+  <div style={{ marginBottom: 20 }}>
+    <h3 style={{ margin: 0, fontSize: 15, fontWeight: 600, color: DS.text.primary, letterSpacing: -0.2 }}>{children}</h3>
+    {sub && <p style={{ margin: "4px 0 0", fontSize: 12, color: DS.text.tertiary, lineHeight: 1.5 }}>{sub}</p>}
+  </div>
+);
+
+function KPI({ label, value, sub, color }) {
+  return (
+    <div style={{ flex: 1, minWidth: 130 }}>
+      <div style={{ fontSize: 10, fontWeight: 600, color: DS.text.tertiary, textTransform: "uppercase",
+        letterSpacing: 1.2, marginBottom: 6 }}>{label}</div>
+      <div style={{ fontSize: 28, fontWeight: 700, color: color || DS.text.primary, fontFamily: DS.font,
+        letterSpacing: -0.5, lineHeight: 1 }}>{value}</div>
+      {sub && <div style={{ fontSize: 11, color: DS.text.tertiary, marginTop: 6 }}>{sub}</div>}
+    </div>
+  );
+}
+
+function Pill({ active, label, onClick, color }) {
+  return (
+    <button onClick={onClick} style={{
+      padding: "7px 16px", borderRadius: 20, fontSize: 12, fontWeight: 500, cursor: "pointer",
+      border: active ? `1.5px solid ${color || DS.accent}` : `1px solid ${DS.border}`,
+      background: active ? `${color || DS.accent}0D` : "transparent",
+      color: active ? (color || DS.accent) : DS.text.secondary,
+      fontFamily: DS.font, transition: "all 0.15s",
+    }}>
+      {label}
+    </button>
+  );
+}
+
+function SatBar({ value, max = 1 }) {
+  const pct = Math.min(value / max * 100, 100);
+  const color = pct > 50 ? DS.negative : pct > 35 ? DS.warning : DS.positive;
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      <div style={{ width: 56, height: 4, background: DS.borderLight, borderRadius: 2 }}>
+        <div style={{ width: `${pct}%`, height: 4, borderRadius: 2, background: color, transition: "width 0.3s" }} />
+      </div>
+      <span style={{ fontSize: 11, color: DS.text.secondary, fontFamily: DS.mono, minWidth: 30 }}>{(value*100).toFixed(0)}%</span>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════
+// TAB: EXECUTIVE BRIEFING
+// ═══════════════════════════════════════════════════════
+
+function BriefingTab() {
+  const sections = [
+    {
+      label: "BUSINESS CONTEXT",
+      content: `ShopNova, a DTC retail e-commerce brand, invests approximately $9.1M annually across six paid media channels. As the brand scales, leadership requires a data-driven framework to answer three critical questions: (1) Which channels are truly driving incremental revenue versus riding organic demand? (2) Where are we experiencing diminishing returns on ad spend? (3) How should we reallocate budget to maximize growth without increasing total investment? This analysis was commissioned to move budget decisions from heuristic-based ("spend more on what worked last quarter") to econometrically-grounded optimization.`,
+    },
+    {
+      label: "DATA & METHODOLOGY",
+      content: `We constructed a Marketing Mix Model using 104 weeks (Jan 2024 – Dec 2025) of weekly channel-level spend and revenue data across six paid channels plus organic and direct traffic. The model employs a log-linear regression with three key transformations: (1) Saturation functions (1 − e^(−spend/k)) to capture diminishing returns at different spend levels per channel, (2) Geometric adstock with channel-specific decay rates and lag parameters to model carryover effects (e.g., TV/OTT shows a 2-week lag with 35% weekly decay), and (3) Seasonal and trend controls to isolate media impact from natural demand fluctuations. Crucially, the baseline (revenue without any paid media) is decomposed directly from the model's own coefficients — intercept + trend + seasonality — rather than assumed externally. This follows the industry-standard approach used by Meta Robyn, Google Meridian, and PyMC-Marketing, where baseline is a model output, not an input assumption.`,
+    },
+    {
+      label: "MODEL SPECIFICATION: WHY LOG-LINEAR WITH SATURATION TRANSFORMS",
+      content: `We considered four modeling approaches: (1) Plain linear regression — fast but assumes constant marginal returns, which contradicts marketing theory and overstates the value of high-spend channels. (2) Ridge / regularized regression — Meta's Robyn uses this approach with Nevergrad hyperparameter optimization, which handles multicollinearity well but still requires explicit saturation transforms. (3) Full Bayesian MMM — Google's Meridian and PyMC-Marketing both use Bayesian inference with prior distributions, providing posterior uncertainty intervals. Powerful but computationally expensive and requires careful prior elicitation. (4) Log-linear with saturation transforms (our choice) — applies a non-linear transformation (1 − e^(−spend/k)) before regression, capturing diminishing returns directly while keeping the estimation stage as interpretable OLS. This is the most established specification in industry, used by Analytic Partners (GPS-E) and the foundational approach underlying both Robyn and Meridian. We chose it for this analysis because: the dataset (104 weeks, 6 channels) is too small to justify full Bayesian MCMC sampling without strong priors; interpretability is critical for stakeholder buy-in; and the saturation + adstock transforms capture the two most important real-world dynamics (diminishing returns and carryover effects) without over-parameterizing.`,
+    },
+    {
+      label: "CORE PARAMETERS & OPEN-SOURCE TOOLING",
+      content: `Key parameters per channel: (a) Saturation constant (k) — controls where diminishing returns set in; estimated via grid search over the response surface. (b) Adstock decay rate (λ) — geometric decay capturing how today's spend continues generating revenue in future weeks. TV/OTT has the highest decay (0.35) and longest lag (2 weeks), while Email decays fastest (0.05). (c) Channel coefficient (β) — the revenue response at full saturation, estimated via OLS on the transformed features. Implementation used Python (NumPy + Pandas) with a custom pipeline for transparency and reproducibility. In a production setting, three open-source frameworks are strong alternatives: Meta's Robyn (Python/R, ridge regression + Nevergrad automated hyperparameter tuning — best for rapid iteration), Google's Meridian (Python, Bayesian with TensorFlow Probability — best for geo-level data and uncertainty quantification), and PyMC-Marketing (Python, Bayesian with PyMC — most flexible, highest PyPI downloads, ideal for custom model extensions). The custom implementation here mirrors the core mechanics of these frameworks while keeping the code fully auditable.`,
+    },
+  ];
+
+  const takeaways = [
+    { num: "01", title: "Email is the single largest optimization opportunity",
+      detail: "At 12.8x ROI and only 38% saturation, Email receives just 5% of budget but generates the highest return per dollar. Scaling from $8K to $29K/week is projected to be the single largest contributor to revenue lift.",
+      direction: "up" },
+    { num: "02", title: "TV/OTT requires nuanced evaluation beyond surface ROAS",
+      detail: "TV/OTT shows the lowest direct ROAS at 1.5x, but this likely understates its true value. Its 2-week carryover, brand halo effects (driving branded search and direct traffic), and awareness-building role are only partially captured by the model. Recommended: validate with geo-holdout tests before cutting below $38.5K/week floor.",
+      direction: "down" },
+    { num: "03", title: "Affiliate is underleveraged with substantial headroom",
+      detail: "At 7.2x ROI and 36% saturation, Affiliate is the second most efficient channel. Current investment of $12K/week is well below the efficient frontier. Scaling to $29K/week captures significant incremental revenue through performance partnerships.",
+      direction: "up" },
+    { num: "04", title: "Reallocation alone unlocks ~$6.8M in annual revenue",
+      detail: "Without increasing total spend, optimizing the channel mix based on marginal return curves projects a +24.4% lift in media-attributable revenue — approximately $6.8M annually. This is a realistic, actionable growth lever achievable through disciplined reallocation.",
+      direction: "up" },
+    { num: "05", title: "Model baseline accounts for 16.2% of revenue — media is the primary driver",
+      detail: "The regression decomposes revenue into a baseline (intercept + trend + seasonality = $133K/wk average) and media contribution (83.8%). The baseline reflects organic demand, brand equity, and macro trends extracted directly from model coefficients — not assumed ratios. This high media share signals strong paid channel effectiveness, but also dependency worth monitoring.",
+      direction: "neutral" },
+  ];
+
+  return (
+    <div>
+      {/* Header card */}
+      <Card style={{ background: "#2C2C2C", border: "none", marginBottom: 24, padding: "32px 36px" }}>
+        <div style={{ fontSize: 10, fontWeight: 600, color: "#9B9B9B", textTransform: "uppercase", letterSpacing: 2, marginBottom: 12 }}>
+          EXECUTIVE BRIEFING
+        </div>
+        <h2 style={{ margin: "0 0 12px", fontSize: 22, fontWeight: 700, color: "#FAFAF8", lineHeight: 1.3, letterSpacing: -0.3 }}>
+          Media Budget Optimization Analysis
+        </h2>
+        <p style={{ margin: 0, fontSize: 14, color: "#9B9B9B", lineHeight: 1.7, maxWidth: 700 }}>
+          An econometric analysis of ShopNova's $9.1M annual media investment across six paid channels,
+          identifying a <span style={{ color: DS.positive, fontWeight: 600 }}>+24.4% revenue lift opportunity</span> through
+          budget reallocation — without increasing total spend.
+        </p>
+      </Card>
+
+      {/* Context sections */}
+      {sections.map((s, i) => (
+        <Card key={i} style={{ marginBottom: 16 }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: DS.accent, textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 12 }}>
+            {s.label}
+          </div>
+          <p style={{ margin: 0, fontSize: 13.5, color: DS.text.secondary, lineHeight: 1.8 }}>{s.content}</p>
+        </Card>
+      ))}
+
+      {/* Key Takeaways */}
+      <Card style={{ marginTop: 8 }}>
+        <div style={{ fontSize: 10, fontWeight: 700, color: DS.accent, textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 20 }}>
+          KEY TAKEAWAYS
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+          {takeaways.map(t => (
+            <div key={t.num} style={{ display: "flex", gap: 20, paddingBottom: 20, borderBottom: `1px solid ${DS.borderLight}` }}>
+              <div style={{ fontSize: 28, fontWeight: 700, color: DS.borderLight, fontFamily: DS.mono, minWidth: 36, lineHeight: 1 }}>{t.num}</div>
+              <div style={{ flex: 1 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                  <h4 style={{ margin: 0, fontSize: 14, fontWeight: 600, color: DS.text.primary }}>{t.title}</h4>
+                  {t.direction === "up" && <span style={{ fontSize: 10, fontWeight: 700, color: DS.positive, background: `${DS.positive}15`, padding: "2px 8px", borderRadius: 10 }}>SCALE</span>}
+                  {t.direction === "down" && <span style={{ fontSize: 10, fontWeight: 700, color: DS.negative, background: `${DS.negative}15`, padding: "2px 8px", borderRadius: 10 }}>REDUCE</span>}
+                  {t.direction === "neutral" && <span style={{ fontSize: 10, fontWeight: 700, color: DS.text.tertiary, background: DS.surfaceAlt, padding: "2px 8px", borderRadius: 10 }}>MAINTAIN</span>}
+                </div>
+                <p style={{ margin: 0, fontSize: 13, color: DS.text.secondary, lineHeight: 1.7 }}>{t.detail}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════
+// TAB: OVERVIEW
+// ═══════════════════════════════════════════════════════
+
+function OverviewTab() {
+  const pieData = ALL_CHANNELS.map(ch => ({ name: ch, value: CHANNEL_STATS[ch].totalContrib }));
+  const spendPie = CHANNELS.map(ch => ({ name: ch, value: CHANNEL_STATS[ch].totalSpend }));
+
+  return (
+    <div>
+      <Card style={{ marginBottom: 20 }}>
+        <SectionTitle sub="Revenue (line) and media spend (bars) on a single shared axis — visual height difference reflects the true ~4.8x return">Revenue & Media Spend</SectionTitle>
+        <ResponsiveContainer width="100%" height={300}>
+          <ComposedChart data={MONTHLY}>
+            <CartesianGrid strokeDasharray="3 3" stroke={DS.borderLight} vertical={false} />
+            <XAxis dataKey="m" tick={{ fontSize: 10, fill: DS.text.tertiary }} axisLine={false} tickLine={false} />
+            <YAxis tick={{ fontSize: 11, fill: DS.text.tertiary }} tickFormatter={v => fmt(v)} axisLine={false} tickLine={false}
+              domain={[0, 'auto']} />
+            <Tooltip content={<ChartTooltip />} />
+            <Legend wrapperStyle={{ fontSize: 12, color: DS.text.secondary }} />
+            <Bar dataKey="spend" name="Media Spend" fill={DS.negative} radius={[3, 3, 0, 0]} barSize={24} fillOpacity={0.55} />
+            <Line type="monotone" dataKey="rev" name="Revenue" stroke={DS.accent} strokeWidth={2.5} dot={false} />
+          </ComposedChart>
+        </ResponsiveContainer>
+      </Card>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 20 }}>
+        <Card>
+          <SectionTitle sub="Share of total revenue attributed to each channel">Revenue Attribution</SectionTitle>
+          <ResponsiveContainer width="100%" height={200}>
+            <PieChart>
+              <Pie data={pieData} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={48} outerRadius={85} paddingAngle={1.5} strokeWidth={0}>
+                {pieData.map(d => <Cell key={d.name} fill={DS.channels[d.name]} />)}
+              </Pie>
+              <Tooltip formatter={v => fmt(v)} />
+            </PieChart>
+          </ResponsiveContainer>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 12px", justifyContent: "center", marginTop: 8 }}>
+            {ALL_CHANNELS.map(ch => (
+              <div key={ch} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: DS.text.secondary }}>
+                <span style={{ width: 7, height: 7, borderRadius: "50%", background: DS.channels[ch] }} /> {ch}
+              </div>
+            ))}
+          </div>
+        </Card>
+        <Card>
+          <SectionTitle sub="How the $9.1M annual budget is distributed">Spend Distribution</SectionTitle>
+          <ResponsiveContainer width="100%" height={200}>
+            <PieChart>
+              <Pie data={spendPie} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={48} outerRadius={85} paddingAngle={1.5} strokeWidth={0}>
+                {spendPie.map(d => <Cell key={d.name} fill={DS.channels[d.name]} />)}
+              </Pie>
+              <Tooltip formatter={v => fmt(v)} />
+            </PieChart>
+          </ResponsiveContainer>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 12px", justifyContent: "center", marginTop: 8 }}>
+            {CHANNELS.map(ch => (
+              <div key={ch} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: DS.text.secondary }}>
+                <span style={{ width: 7, height: 7, borderRadius: "50%", background: DS.channels[ch] }} />
+                {ch} <span style={{ color: DS.text.tertiary }}>({(CHANNEL_STATS[ch].totalSpend / META.totalSpend * 100).toFixed(0)}%)</span>
+              </div>
+            ))}
+          </div>
+        </Card>
+      </div>
+
+      <Card>
+        <SectionTitle sub="Revenue generated per $1 of media spend, by channel">Channel ROI Comparison</SectionTitle>
+        <ResponsiveContainer width="100%" height={240}>
+          <BarChart data={CHANNELS.map(ch => ({ ch, roi: CHANNEL_STATS[ch].roi }))} layout="vertical">
+            <CartesianGrid strokeDasharray="3 3" stroke={DS.borderLight} horizontal={false} />
+            <XAxis type="number" tick={{ fontSize: 11, fill: DS.text.tertiary }} axisLine={false} tickLine={false} />
+            <YAxis type="category" dataKey="ch" width={100} tick={{ fontSize: 12, fill: DS.text.secondary }} axisLine={false} tickLine={false} />
+            <Tooltip content={<ChartTooltip />} />
+            <Bar dataKey="roi" name="ROI (x)" radius={[0, 4, 4, 0]} barSize={18}>
+              {CHANNELS.map(ch => <Cell key={ch} fill={DS.channels[ch]} />)}
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+      </Card>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════
+// TAB: MMM RESULTS
+// ═══════════════════════════════════════════════════════
+
+function MMMTab() {
+  const [sel, setSel] = useState(null); // null = overview
+  const table = CHANNELS.map(ch => CHANNEL_STATS[ch]).map((s, i) => ({ ...s, ch: CHANNELS[i] })).sort((a, b) => b.roi - a.roi);
+
+  // Overall: normalized saturation curves for all channels on same scale (0-100% of max spend → 0-100% of max response)
+  const overallData = useMemo(() => {
+    const pts = [];
+    for (let pct = 0; pct <= 100; pct += 2) {
+      const row = { pct: `${pct}%` };
+      CHANNELS.forEach(ch => {
+        const s = CHANNEL_STATS[ch];
+        const spend = s.avgSpend * 3.5 * pct / 100;
+        row[ch] = Math.round(s.beta * (1 - Math.exp(-spend / s.satK)) * 1000);
+      });
+      pts.push(row);
+    }
+    return pts;
+  }, []);
+
+  // For individual channel view
+  const curve = sel ? (SAT_CURVES[sel] || []) : [];
+  const st = sel ? CHANNEL_STATS[sel] : null;
+
+  // Channel incremental contribution at current & optimal spend
+  const incrementalAtCurrent = sel ? Math.round(CHANNEL_STATS[sel].beta * (1 - Math.exp(-CHANNEL_STATS[sel].avgSpend / CHANNEL_STATS[sel].satK)) * 1000) : 0;
+  const incrementalAtOptimal = sel ? Math.round(CHANNEL_STATS[sel].beta * (1 - Math.exp(-SCENARIOS[1].alloc[sel] / CHANNEL_STATS[sel].satK)) * 1000) : 0;
+
+  return (
+    <div>
+      {/* ── Revenue Decomposition Over Time ── */}
+      <Card style={{ marginBottom: 20 }}>
+        <SectionTitle sub="104-week decomposition: baseline (intercept + trend + seasonality) and media contribution by channel — baseline is a model output, not an assumption">
+          Revenue Decomposition
+        </SectionTitle>
+        <div style={{ display: "grid", gridTemplateColumns: "3fr 1fr", gap: 20 }}>
+          <ResponsiveContainer width="100%" height={320}>
+            <AreaChart data={DECOMP_STACKED}>
+              <CartesianGrid strokeDasharray="3 3" stroke={DS.borderLight} vertical={false} />
+              <XAxis dataKey="week" tick={{ fontSize: 10, fill: DS.text.tertiary }} axisLine={false} tickLine={false} interval={7} />
+              <YAxis tick={{ fontSize: 11, fill: DS.text.tertiary }} tickFormatter={v => fmt(v)} axisLine={false} tickLine={false}
+                label={{ value: "Weekly Revenue", angle: -90, position: "insideLeft", offset: 10, fontSize: 11, fill: DS.text.tertiary }} />
+              <Tooltip content={<ChartTooltip />} />
+              <Area type="monotone" dataKey="Baseline" stackId="1" fill="#D5D3CE" stroke="#B0ADA6" strokeWidth={1} />
+              {CHANNELS.map(ch => (
+                <Area key={ch} type="monotone" dataKey={ch} stackId="1" fill={DS.channels[ch]} stroke={DS.channels[ch]} strokeWidth={0.5} fillOpacity={0.7} />
+              ))}
+            </AreaChart>
+          </ResponsiveContainer>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <div style={{ padding: "12px 14px", background: DS.surfaceAlt, borderRadius: DS.radius.md }}>
+              <div style={{ fontSize: 9, fontWeight: 700, color: DS.text.tertiary, textTransform: "uppercase", letterSpacing: 1 }}>MODEL BASELINE</div>
+              <div style={{ fontSize: 18, fontWeight: 700, color: DS.text.secondary, marginTop: 4 }}>{fmt(BASELINE.meanWeekly)}<span style={{ fontSize: 11, fontWeight: 400 }}>/wk</span></div>
+              <div style={{ fontSize: 10, color: DS.text.tertiary, marginTop: 2 }}>{(BASELINE.shareOfTotal * 100).toFixed(1)}% of total revenue</div>
+              <div style={{ fontSize: 10, color: DS.text.tertiary }}>Intercept + Trend + Seasonality</div>
+            </div>
+            <div style={{ padding: "12px 14px", background: `${DS.accent}08`, borderRadius: DS.radius.md, border: `1px solid ${DS.accent}20` }}>
+              <div style={{ fontSize: 9, fontWeight: 700, color: DS.accent, textTransform: "uppercase", letterSpacing: 1 }}>MEDIA CONTRIBUTION</div>
+              <div style={{ fontSize: 18, fontWeight: 700, color: DS.accent, marginTop: 4 }}>{(BASELINE.mediaShareOfTotal * 100).toFixed(1)}%</div>
+              <div style={{ fontSize: 10, color: DS.text.tertiary, marginTop: 2 }}>6 paid channels combined</div>
+            </div>
+            <div style={{ padding: "12px 14px", background: DS.surfaceAlt, borderRadius: DS.radius.md }}>
+              <div style={{ fontSize: 9, fontWeight: 700, color: DS.text.tertiary, textTransform: "uppercase", letterSpacing: 1 }}>TREND GROWTH</div>
+              <div style={{ fontSize: 14, fontWeight: 700, color: DS.positive, marginTop: 4 }}>{fmt(BASELINE.trendStart)} → {fmt(BASELINE.trendEnd)}</div>
+              <div style={{ fontSize: 10, color: DS.text.tertiary, marginTop: 2 }}>Baseline floor rising over 2 years</div>
+            </div>
+            <div style={{ padding: "12px 14px", background: DS.surfaceAlt, borderRadius: DS.radius.md }}>
+              <div style={{ fontSize: 9, fontWeight: 700, color: DS.text.tertiary, textTransform: "uppercase", letterSpacing: 1 }}>HOLIDAY LIFT</div>
+              <div style={{ fontSize: 14, fontWeight: 700, color: DS.warning, marginTop: 4 }}>+{fmt(BASELINE.components.novCoef)} – +{fmt(BASELINE.components.decCoef)}</div>
+              <div style={{ fontSize: 10, color: DS.text.tertiary, marginTop: 2 }}>Nov/Dec seasonal spike in baseline</div>
+            </div>
+          </div>
+        </div>
+        {/* Legend */}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 16px", marginTop: 12, paddingTop: 10, borderTop: `1px solid ${DS.borderLight}` }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: DS.text.secondary }}>
+            <span style={{ width: 12, height: 8, borderRadius: 2, background: "#D5D3CE" }} /> Baseline (model-derived)
+          </div>
+          {CHANNELS.map(ch => (
+            <div key={ch} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: DS.text.secondary }}>
+              <span style={{ width: 12, height: 8, borderRadius: 2, background: DS.channels[ch] }} /> {ch}
+            </div>
+          ))}
+        </div>
+      </Card>
+
+      {/* ── Overall Saturation Landscape ── */}
+      <Card style={{ marginBottom: 20 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12, marginBottom: 20 }}>
+          <SectionTitle sub={sel ? "Spend vs. revenue response — shaded area shows incremental lift above model baseline" : "All channels normalized to comparable scale — steeper curves = higher marginal efficiency"}>
+            {sel ? `${sel} — Diminishing Returns Curve` : "Overall Diminishing Returns Landscape"}
+          </SectionTitle>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            <Pill active={!sel} label="Overall" onClick={() => setSel(null)} color={DS.highlight} />
+            {CHANNELS.map(ch => <Pill key={ch} active={ch===sel} label={ch} onClick={() => setSel(ch)} color={DS.channels[ch]} />)}
+          </div>
+        </div>
+
+        {/* ── OVERALL VIEW ── */}
+        {!sel && (
+          <div>
+            <ResponsiveContainer width="100%" height={340}>
+              <LineChart data={overallData}>
+                <CartesianGrid strokeDasharray="3 3" stroke={DS.borderLight} vertical={false} />
+                <XAxis dataKey="pct" tick={{ fontSize: 11, fill: DS.text.tertiary }} axisLine={false} tickLine={false}
+                  label={{ value: "% of Max Spend Range", position: "insideBottom", offset: -4, fontSize: 11, fill: DS.text.tertiary }} />
+                <YAxis tick={{ fontSize: 11, fill: DS.text.tertiary }} tickFormatter={v => fmt(v)} axisLine={false} tickLine={false}
+                  label={{ value: "Weekly Revenue Response", angle: -90, position: "insideLeft", offset: 10, fontSize: 11, fill: DS.text.tertiary }} />
+                <Tooltip content={<ChartTooltip />} />
+                <Legend wrapperStyle={{ fontSize: 12 }} />
+                {CHANNELS.map(ch => (
+                  <Line key={ch} type="monotone" dataKey={ch} name={ch} stroke={DS.channels[ch]}
+                    strokeWidth={2} dot={false} />
+                ))}
+              </LineChart>
+            </ResponsiveContainer>
+
+            {/* Mini cards showing where each channel currently sits */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 10, marginTop: 16 }}>
+              {CHANNELS.map(ch => {
+                const s = CHANNEL_STATS[ch];
+                return (
+                  <div key={ch} onClick={() => setSel(ch)} style={{ padding: "12px 14px", background: DS.surfaceAlt,
+                    borderRadius: DS.radius.md, cursor: "pointer", borderTop: `3px solid ${DS.channels[ch]}`,
+                    transition: "transform 0.15s" }}>
+                    <div style={{ fontSize: 11, fontWeight: 600, color: DS.channels[ch], marginBottom: 6 }}>{ch}</div>
+                    <div style={{ fontSize: 9, color: DS.text.tertiary, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.8 }}>Saturation</div>
+                    <div style={{ fontSize: 16, fontWeight: 700, color: s.saturation > 0.5 ? DS.negative : s.saturation > 0.35 ? DS.warning : DS.positive }}>
+                      {(s.saturation * 100).toFixed(0)}%
+                    </div>
+                    <div style={{ fontSize: 9, color: DS.text.tertiary, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.8, marginTop: 6 }}>ROI</div>
+                    <div style={{ fontSize: 16, fontWeight: 700, color: DS.text.primary }}>{s.roi}x</div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* ── INDIVIDUAL CHANNEL VIEW ── */}
+        {sel && st && (
+          <div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 280px", gap: 24 }}>
+              <div>
+                <ResponsiveContainer width="100%" height={340}>
+                  <ComposedChart data={curve}>
+                    <CartesianGrid strokeDasharray="3 3" stroke={DS.borderLight} vertical={false} />
+                    <XAxis dataKey="spend" tick={{ fontSize: 11, fill: DS.text.tertiary }} tickFormatter={v => fmt(v)} axisLine={false} tickLine={false}
+                      label={{ value: "Weekly Channel Spend", position: "insideBottom", offset: -4, fontSize: 11, fill: DS.text.tertiary }} />
+                    <YAxis tick={{ fontSize: 11, fill: DS.text.tertiary }} tickFormatter={v => fmt(v)} axisLine={false} tickLine={false}
+                      label={{ value: "Incremental Revenue", angle: -90, position: "insideLeft", offset: 10, fontSize: 11, fill: DS.text.tertiary }} />
+                    <Tooltip content={<ChartTooltip />} />
+                    {/* Pure channel response curve — incremental revenue as a function of spend */}
+                    <Area type="monotone" dataKey="response" name="Channel Incremental Revenue" fill={`${DS.channels[sel]}18`}
+                      stroke={DS.channels[sel]} strokeWidth={2.5} />
+                    {/* Vertical markers */}
+                    <ReferenceLine x={st.avgSpend} stroke={DS.negative} strokeDasharray="8 4" strokeWidth={1.5}
+                      label={{ value: "Current", position: "insideTopRight", fill: DS.negative, fontSize: 10, fontWeight: 600 }} />
+                    <ReferenceLine x={SCENARIOS[1].alloc[sel]} stroke={DS.positive} strokeDasharray="8 4" strokeWidth={1.5}
+                      label={{ value: "Optimal", position: "insideTopLeft", fill: DS.positive, fontSize: 10, fontWeight: 600 }} />
+                  </ComposedChart>
+                </ResponsiveContainer>
+                {/* Annotation below chart */}
+                <div style={{ display: "flex", alignItems: "center", gap: 20, marginTop: 8, padding: "10px 16px",
+                  background: DS.surfaceAlt, borderRadius: DS.radius.md, fontSize: 12, color: DS.text.secondary }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <div style={{ width: 24, height: 10, background: `${DS.channels[sel]}30`, borderTop: `2px solid ${DS.channels[sel]}`, borderRadius: 2 }} />
+                    <span>Incremental revenue from this channel</span>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <svg width="24" height="2"><line x1="0" y1="1" x2="24" y2="1" stroke={DS.negative} strokeWidth="1.5" strokeDasharray="4 3" /></svg>
+                    <span>Current spend</span>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <svg width="24" height="2"><line x1="0" y1="1" x2="24" y2="1" stroke={DS.positive} strokeWidth="1.5" strokeDasharray="4 3" /></svg>
+                    <span>Optimal spend</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Stats panel */}
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                <div style={{ padding: "14px 16px", background: `${DS.channels[sel]}0C`, borderRadius: DS.radius.md, border: `1px solid ${DS.channels[sel]}25` }}>
+                  <div style={{ fontSize: 9, fontWeight: 700, color: DS.channels[sel], textTransform: "uppercase", letterSpacing: 1.2 }}>INCREMENTAL AT CURRENT SPEND</div>
+                  <div style={{ fontSize: 20, fontWeight: 700, color: DS.channels[sel], marginTop: 4 }}>+{fmt(incrementalAtCurrent)}/wk</div>
+                  <div style={{ fontSize: 10, color: DS.text.tertiary, marginTop: 2 }}>Lift above organic ({fmt(st.avgSpend)}/wk spend)</div>
+                </div>
+                <div style={{ padding: "14px 16px", background: `${DS.positive}0C`, borderRadius: DS.radius.md, border: `1px solid ${DS.positive}25` }}>
+                  <div style={{ fontSize: 9, fontWeight: 700, color: DS.positive, textTransform: "uppercase", letterSpacing: 1.2 }}>INCREMENTAL AT OPTIMAL SPEND</div>
+                  <div style={{ fontSize: 20, fontWeight: 700, color: DS.positive, marginTop: 4 }}>+{fmt(incrementalAtOptimal)}/wk</div>
+                  <div style={{ fontSize: 10, color: DS.text.tertiary, marginTop: 2 }}>
+                    {incrementalAtOptimal > incrementalAtCurrent
+                      ? `+${fmt(incrementalAtOptimal - incrementalAtCurrent)} vs current`
+                      : `${fmt(incrementalAtOptimal - incrementalAtCurrent)} vs current (realloc elsewhere)`}
+                  </div>
+                </div>
+                <div style={{ padding: "14px 16px", background: DS.surfaceAlt, borderRadius: DS.radius.md }}>
+                  <div style={{ fontSize: 9, fontWeight: 700, color: DS.text.tertiary, textTransform: "uppercase", letterSpacing: 1.2 }}>ROI</div>
+                  <div style={{ fontSize: 20, fontWeight: 700, color: st.roi > 5 ? DS.positive : DS.text.primary, marginTop: 4 }}>{st.roi}x</div>
+                </div>
+                <div style={{ padding: "14px 16px", background: DS.surfaceAlt, borderRadius: DS.radius.md }}>
+                  <div style={{ fontSize: 9, fontWeight: 700, color: DS.text.tertiary, textTransform: "uppercase", letterSpacing: 1.2 }}>SATURATION</div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 4 }}>
+                    <div style={{ fontSize: 20, fontWeight: 700, color: st.saturation > 0.5 ? DS.negative : st.saturation > 0.35 ? DS.warning : DS.positive }}>
+                      {(st.saturation*100).toFixed(0)}%
+                    </div>
+                    <div style={{ flex: 1, height: 5, background: DS.borderLight, borderRadius: 3 }}>
+                      <div style={{ width: `${st.saturation*100}%`, height: 5, borderRadius: 3,
+                        background: st.saturation > 0.5 ? DS.negative : st.saturation > 0.35 ? DS.warning : DS.positive }} />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </Card>
+
+      {/* ── Performance Table ── */}
+      <Card>
+        <SectionTitle sub="All paid channels ranked by return on investment">Channel Performance Matrix</SectionTitle>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+          <thead>
+            <tr>
+              {["Channel", "Annual Spend", "Revenue Contribution", "ROI", "Saturation", "Assessment"].map(h => (
+                <th key={h} style={{ padding: "10px 14px", textAlign: "left", fontWeight: 600, color: DS.text.tertiary,
+                  fontSize: 10, textTransform: "uppercase", letterSpacing: 0.8, borderBottom: `2px solid ${DS.border}` }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {table.map((r, i) => (
+              <tr key={r.ch} style={{ borderBottom: `1px solid ${DS.borderLight}`, cursor: "pointer" }}
+                onClick={() => setSel(r.ch)}>
+                <td style={{ padding: "12px 14px", fontWeight: 600, color: DS.channels[r.ch] }}>{r.ch}</td>
+                <td style={{ padding: "12px 14px", color: DS.text.secondary, fontFamily: DS.mono, fontSize: 12 }}>{fmt(r.totalSpend)}</td>
+                <td style={{ padding: "12px 14px", color: DS.text.secondary, fontFamily: DS.mono, fontSize: 12 }}>{fmt(r.totalContrib)}</td>
+                <td style={{ padding: "12px 14px", fontWeight: 700, fontFamily: DS.mono, fontSize: 13,
+                  color: r.roi > 9 ? DS.positive : r.roi > 2.5 ? DS.text.primary : DS.negative }}>{r.roi}x</td>
+                <td style={{ padding: "12px 14px" }}><SatBar value={r.saturation} /></td>
+                <td style={{ padding: "12px 14px", fontSize: 12, color: DS.text.secondary }}>
+                  {r.roi > 9 ? "High headroom — scale" : r.roi > 3 ? "Mature — optimize" : r.roi > 2 ? "Monitor efficiency" : "Reduce to floor"}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </Card>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════
+// TAB: BUDGET OPTIMIZER
+// ═══════════════════════════════════════════════════════
+
+function OptimizerTab() {
+  const [idx, setIdx] = useState(1);
+  const scenario = SCENARIOS[idx];
+  const base = SCENARIOS[0];
+
+  const comp = CHANNELS.map(ch => ({
+    ch, current: base.alloc[ch], optimized: scenario.alloc[ch],
+    delta: scenario.alloc[ch] - base.alloc[ch],
+    deltaPct: (scenario.alloc[ch] - base.alloc[ch]) / base.alloc[ch] * 100,
+  }));
+
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 10, marginBottom: 20, flexWrap: "wrap" }}>
+        {SCENARIOS.map((s, i) => (
+          <button key={i} onClick={() => setIdx(i)} style={{
+            flex: "1 1 150px", padding: "14px 18px", borderRadius: DS.radius.md, cursor: "pointer",
+            border: i === idx ? `1.5px solid ${DS.accent}` : `1px solid ${DS.border}`,
+            background: i === idx ? `${DS.accent}08` : DS.surface,
+            textAlign: "left", fontFamily: DS.font, transition: "all 0.15s",
+          }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: i === idx ? DS.accent : DS.text.primary }}>{s.name}</div>
+            <div style={{ fontSize: 11, color: DS.text.tertiary, marginTop: 2 }}>{fmt(s.budget)}/week</div>
+            <div style={{ fontSize: 16, fontWeight: 700, marginTop: 6, fontFamily: DS.mono,
+              color: s.vsPct > 0 ? DS.positive : s.vsPct < 0 ? DS.negative : DS.text.tertiary }}>
+              {s.vsPct === 0 ? "—" : fmtPct(s.vsPct)}
+            </div>
+          </button>
+        ))}
+      </div>
+
+      <Card style={{ marginBottom: 20 }}>
+        <SectionTitle>Allocation Comparison: Current vs. {scenario.name}</SectionTitle>
+        <ResponsiveContainer width="100%" height={280}>
+          <BarChart data={comp} layout="vertical">
+            <CartesianGrid strokeDasharray="3 3" stroke={DS.borderLight} horizontal={false} />
+            <XAxis type="number" tick={{ fontSize: 11, fill: DS.text.tertiary }} tickFormatter={v => fmt(v)} axisLine={false} tickLine={false} />
+            <YAxis type="category" dataKey="ch" width={100} tick={{ fontSize: 12, fill: DS.text.secondary }} axisLine={false} tickLine={false} />
+            <Tooltip content={<ChartTooltip />} />
+            <Legend wrapperStyle={{ fontSize: 12 }} />
+            <Bar dataKey="current" name="Current" fill={DS.border} radius={[0, 3, 3, 0]} barSize={12} />
+            <Bar dataKey="optimized" name={scenario.name} fill={DS.accent} radius={[0, 3, 3, 0]} barSize={12} />
+          </BarChart>
+        </ResponsiveContainer>
+      </Card>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 20 }}>
+        {comp.map(d => {
+          const up = d.delta > 0;
+          return (
+            <Card key={d.ch} style={{ padding: 18, borderLeft: `3px solid ${DS.channels[d.ch]}` }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: DS.text.primary, marginBottom: 10 }}>{d.ch}</div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
+                <div>
+                  <div style={{ fontSize: 9, color: DS.text.tertiary, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.8 }}>Current</div>
+                  <div style={{ fontSize: 15, fontWeight: 600, color: DS.text.secondary, fontFamily: DS.mono }}>{fmt(d.current)}</div>
+                </div>
+                <span style={{ color: DS.text.tertiary, fontSize: 16, margin: "0 4px" }}>→</span>
+                <div style={{ textAlign: "right" }}>
+                  <div style={{ fontSize: 9, color: DS.text.tertiary, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.8 }}>Optimized</div>
+                  <div style={{ fontSize: 15, fontWeight: 600, color: up ? DS.positive : DS.negative, fontFamily: DS.mono }}>{fmt(d.optimized)}</div>
+                </div>
+              </div>
+              <div style={{ textAlign: "center", marginTop: 10, padding: "4px 0", borderRadius: 6,
+                background: up ? `${DS.positive}12` : `${DS.negative}12`,
+                color: up ? DS.positive : DS.negative, fontSize: 11, fontWeight: 600 }}>
+                {up ? "+" : ""}{fmt(d.delta)} ({d.deltaPct >= 0 ? "+" : ""}{d.deltaPct.toFixed(0)}%)
+              </div>
+            </Card>
+          );
+        })}
+      </div>
+
+      {/* Impact banner */}
+      <div style={{ background: "#2C2C2C", borderRadius: DS.radius.lg, padding: "24px 32px",
+        display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div>
+          <div style={{ fontSize: 10, fontWeight: 600, color: "#9B9B9B", textTransform: "uppercase", letterSpacing: 1.5 }}>Projected Impact</div>
+          <div style={{ fontSize: 26, fontWeight: 700, color: DS.text.inverse, marginTop: 4, letterSpacing: -0.3 }}>
+            {scenario.vsPct === 0 ? "Baseline" : `${fmtPct(scenario.vsPct)} Media Revenue Lift`}
+          </div>
+          <div style={{ fontSize: 12, color: "#9B9B9B", marginTop: 4 }}>
+            {fmt(scenario.weeklyContrib)}/week → {fmt(scenario.weeklyContrib * 52)}/year in media-attributable revenue
+          </div>
+        </div>
+        <div style={{ textAlign: "right" }}>
+          <div style={{ fontSize: 10, color: "#9B9B9B", letterSpacing: 1 }}>TOTAL BUDGET</div>
+          <div style={{ fontSize: 24, fontWeight: 700, color: DS.text.inverse, fontFamily: DS.mono }}>{fmt(scenario.budget)}/wk</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════
+// TAB: SCENARIO SIMULATOR
+// ═══════════════════════════════════════════════════════
+
+function SimulatorTab() {
+  const [budgets, setBudgets] = useState({ ...SCENARIOS[0].alloc });
+  const total = Object.values(budgets).reduce((a, b) => a + b, 0);
+  const baseContrib = SCENARIOS[0].weeklyContrib;
+  const simContrib = CHANNELS.reduce((sum, ch) => {
+    return sum + CHANNEL_STATS[ch].beta * (1 - Math.exp(-budgets[ch] / CHANNEL_STATS[ch].satK)) * 1000;
+  }, 0);
+  const lift = (simContrib - baseContrib) / baseContrib * 100;
+
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
+        {[
+          { label: "Reset to Current", a: SCENARIOS[0].alloc },
+          { label: "Load AI-Optimized", a: SCENARIOS[1].alloc },
+          { label: "Load Growth +20%", a: SCENARIOS[2].alloc },
+        ].map(p => (
+          <button key={p.label} onClick={() => setBudgets({ ...p.a })} style={{
+            padding: "7px 16px", borderRadius: 8, border: `1px solid ${DS.border}`, background: DS.surface,
+            fontSize: 12, fontWeight: 500, color: DS.accent, cursor: "pointer", fontFamily: DS.font,
+          }}>{p.label}</button>
+        ))}
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 300px", gap: 20 }}>
+        <Card>
+          <SectionTitle sub="Drag sliders to explore custom budget allocations">Channel Budget Sliders</SectionTitle>
+          {CHANNELS.map(ch => {
+            const max = CHANNEL_STATS[ch].avgSpend * 4;
+            const pct = total > 0 ? (budgets[ch] / total * 100).toFixed(0) : 0;
+            return (
+              <div key={ch} style={{ marginBottom: 20 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ width: 8, height: 8, borderRadius: "50%", background: DS.channels[ch] }} />
+                    <span style={{ fontSize: 13, fontWeight: 500, color: DS.text.primary }}>{ch}</span>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
+                    <span style={{ fontSize: 14, fontWeight: 600, color: DS.channels[ch], fontFamily: DS.mono }}>{fmt(budgets[ch])}</span>
+                    <span style={{ fontSize: 11, color: DS.text.tertiary }}>{pct}%</span>
+                  </div>
+                </div>
+                <input type="range" min={0} max={max} step={500} value={budgets[ch]}
+                  onChange={e => setBudgets(prev => ({ ...prev, [ch]: parseInt(e.target.value) }))}
+                  style={{ width: "100%", accentColor: DS.channels[ch], height: 4 }} />
+              </div>
+            );
+          })}
+        </Card>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <div style={{ background: "#2C2C2C", borderRadius: DS.radius.lg, padding: 20 }}>
+            <div style={{ fontSize: 9, fontWeight: 700, color: "#9B9B9B", textTransform: "uppercase", letterSpacing: 1.5 }}>Weekly Budget</div>
+            <div style={{ fontSize: 28, fontWeight: 700, color: DS.text.inverse, marginTop: 6, fontFamily: DS.font }}>{fmt(total)}</div>
+            <div style={{ fontSize: 11, color: total > META.weeklyBudget ? "#E8A09A" : "#A0C9A0", marginTop: 4 }}>
+              {total === META.weeklyBudget ? "Same as current" :
+                `${fmt(Math.abs(total - META.weeklyBudget))} ${total > META.weeklyBudget ? "over" : "under"} current`}
+            </div>
+          </div>
+
+          <Card style={{ background: lift >= 0 ? `${DS.positive}08` : `${DS.negative}08`, border: `1px solid ${lift >= 0 ? `${DS.positive}30` : `${DS.negative}30`}` }}>
+            <div style={{ fontSize: 9, fontWeight: 700, color: DS.text.tertiary, textTransform: "uppercase", letterSpacing: 1.5 }}>Projected Lift</div>
+            <div style={{ fontSize: 32, fontWeight: 700, color: lift >= 0 ? DS.positive : DS.negative, marginTop: 6 }}>
+              {fmtPct(lift)}
+            </div>
+            <div style={{ fontSize: 11, color: DS.text.secondary, marginTop: 6 }}>
+              {fmt(simContrib)}/wk vs {fmt(baseContrib)} baseline
+            </div>
+          </Card>
+
+          <Card>
+            <div style={{ fontSize: 9, fontWeight: 700, color: DS.text.tertiary, textTransform: "uppercase", letterSpacing: 1.5 }}>Annual Impact</div>
+            <div style={{ fontSize: 24, fontWeight: 700, color: DS.text.primary, marginTop: 6, fontFamily: DS.font }}>
+              {fmt((simContrib - baseContrib) * 52)}
+            </div>
+            <div style={{ fontSize: 11, color: DS.text.tertiary, marginTop: 4 }}>Additional media revenue / year</div>
+          </Card>
+
+          <Card>
+            <div style={{ fontSize: 9, fontWeight: 700, color: DS.text.tertiary, textTransform: "uppercase", letterSpacing: 1.5 }}>Blended ROAS</div>
+            <div style={{ fontSize: 24, fontWeight: 700, color: DS.text.primary, marginTop: 6, fontFamily: DS.font }}>
+              {total > 0 ? (simContrib / total).toFixed(1) : "0"}x
+            </div>
+          </Card>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════
+// TAB: AI INSIGHTS
+// ═══════════════════════════════════════════════════════
+
+function InsightsTab() {
+  const findings = [
+    { title: "Email: Highest ROI channel at 12.8x — the clearest scale opportunity",
+      detail: "Email receives just 5% of budget but delivers the highest return of any channel. At 38% saturation, it has substantial headroom. As an owned channel with near-zero marginal distribution cost, the incremental ROI remains strong well past current spend levels.",
+      action: "Scale Email from $8K → $29K/week. Invest in lifecycle segmentation: cart abandonment, winback, and post-purchase upsell flows. Monitor deliverability and list fatigue as spend scales.",
+      impact: "high" },
+    { title: "TV/OTT: Low direct ROAS (1.5x), but true value is likely understated",
+      detail: "TV/OTT shows the lowest modeled ROAS, but this metric alone is misleading for upper-funnel channels. Three structural factors cause the model to undercount TV's impact: (1) Brand halo — TV drives branded search queries that get attributed to Paid Search, inflating Search ROI while deflating TV's. (2) Delayed carryover — our adstock captures a 2-week lag with 35% decay, but real awareness effects can persist for months. (3) Baseline absorption — some TV-driven demand appears as 'organic' or 'direct' in the model baseline, not in TV's channel coefficient. Industry research (Meta Robyn case studies, Google's Meridian whitepapers) consistently finds that MMMs undervalue TV by 20-40% relative to geo-holdout ground truth.",
+      action: "Do NOT cut TV/OTT based solely on modeled ROAS. Instead: (1) Run a geo-holdout test — dark TV in 2-3 DMAs for 8 weeks and measure total revenue (not just TV-attributed). (2) Analyze the correlation between TV spend and branded search volume with 2-4 week lag. (3) Consider a Bayesian MMM with informative priors on TV's long-tail effect to stress-test the current estimate. Recommended floor: $38.5K/week until incrementality is validated.",
+      impact: "high" },
+    { title: "Affiliate: Second-highest ROI at 7.2x, low saturation headroom",
+      detail: "Affiliate receives 7% of budget but is the second most efficient channel at 36% saturation. Performance partnerships offer a variable-cost, low-risk scaling path. However, watch for partner quality degradation as spend scales — not all incremental affiliate traffic is truly incremental (coupon sites, brand-bidding partners).",
+      action: "Scale Affiliate from $12K → $29K/week. Expand partner network with quality controls. Audit for brand-bidding and cookie-stuffing. Test higher commission tiers for content-driven partners.",
+      impact: "high" },
+    { title: "Paid Search & Social: Mature channels — optimize, don't just cut",
+      detail: "Both channels sit at ~44% saturation with solid 3.2-3.4x ROI. They are efficient but approaching diminishing returns. Note: Paid Search ROI may be inflated by branded queries that would convert organically — a common MMM blind spot.",
+      action: "Reduce Search from $45K → $38.5K and Social from $35K → $28K. Run brand vs. non-brand search analysis to understand true incrementality. Maintain performance through bid optimization and audience refinement rather than raw spend cuts.",
+      impact: "medium" },
+    { title: "Model baseline at 16.2% — media dependency is high",
+      detail: "The model's baseline (intercept + trend + seasonality) averages $133K/week — 16.2% of total predicted revenue. This means 83.8% is directly attributable to media. While this validates paid channel effectiveness, the high dependency means any budget cut will hit topline fast. The baseline also has a healthy upward trend ($108K → $134K over 2 years), suggesting growing organic strength.",
+      action: "Invest in organic growth levers (SEO, content, CRM) to gradually increase the baseline share. Run geo-holdout tests to empirically validate the baseline estimate. Target a 25-30% baseline share over 18 months as a healthier equilibrium.",
+      impact: "medium" },
+    { title: "Cross-channel halo effects: a known model limitation",
+      detail: "MMMs attribute revenue to channels independently, but in reality channels interact. TV awareness drives search intent; social engagement primes email opens; email retargets display clickers. These halo effects mean cutting one channel may degrade another's performance in ways the model doesn't predict. This is the most common failure mode when implementing MMM-based budget recommendations without validation.",
+      action: "Before implementing major reallocations: (1) Phase changes gradually (10-15% per sprint, not all at once). (2) Monitor cross-channel metrics (branded search volume, email open rates, direct traffic) as leading indicators. (3) Build a holdout test framework for the largest proposed shifts.",
+      impact: "medium" },
+  ];
+
+  return (
+    <div>
+      <Card style={{ background: "#2C2C2C", border: "none", marginBottom: 20, padding: "28px 32px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+          <div style={{ width: 32, height: 32, borderRadius: "50%", background: DS.accent, display: "flex", alignItems: "center",
+            justifyContent: "center", fontSize: 16 }}>AI</div>
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 600, color: DS.text.inverse }}>AI-Generated Executive Summary</div>
+            <div style={{ fontSize: 11, color: "#9B9B9B" }}>Based on 104-week MMM analysis with R² = {META.r2}</div>
+          </div>
+        </div>
+        <p style={{ margin: 0, fontSize: 14, color: "#BFBFBF", lineHeight: 1.8 }}>
+          The model identifies a <span style={{ color: DS.positive, fontWeight: 600 }}>+24.4% media revenue lift</span> opportunity
+          by reallocating the existing ${(META.weeklyBudget/1000).toFixed(0)}K/week budget. The primary drivers: Email and Affiliate
+          are under-invested relative to their return curves, while TV/OTT's large budget share shows the lowest modeled ROAS —
+          though its true value is likely understated due to brand halo effects. Implementing the recommended allocation projects
+          an additional <span style={{ color: DS.positive, fontWeight: 600 }}>~$6.8M in annual revenue</span> without increasing
+          total spend. However, cross-channel halo effects mean these shifts should be phased gradually and validated with holdout tests.
+        </p>
+      </Card>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 20 }}>
+        {findings.map((f, i) => (
+          <Card key={i} style={{ borderLeft: `3px solid ${f.impact === "high" ? DS.negative : f.impact === "medium" ? DS.warning : DS.positive}`, padding: 22 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+              <h4 style={{ margin: 0, fontSize: 14, fontWeight: 600, color: DS.text.primary, lineHeight: 1.4 }}>{f.title}</h4>
+              <span style={{ flexShrink: 0, fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.8,
+                padding: "3px 10px", borderRadius: 10,
+                color: f.impact === "high" ? DS.negative : f.impact === "medium" ? DS.warning : DS.positive,
+                background: f.impact === "high" ? `${DS.negative}12` : f.impact === "medium" ? `${DS.warning}12` : `${DS.positive}12`,
+              }}>{f.impact}</span>
+            </div>
+            <p style={{ margin: "10px 0", fontSize: 13, color: DS.text.secondary, lineHeight: 1.7 }}>{f.detail}</p>
+            <div style={{ background: DS.surfaceAlt, borderRadius: DS.radius.sm, padding: "10px 14px" }}>
+              <span style={{ fontSize: 10, fontWeight: 700, color: DS.accent, textTransform: "uppercase", letterSpacing: 0.8 }}>
+                Recommended Action
+              </span>
+              <span style={{ fontSize: 12, color: DS.text.secondary, marginLeft: 10 }}>{f.action}</span>
+            </div>
+          </Card>
+        ))}
+      </div>
+
+      <Card style={{ background: DS.surfaceAlt }}>
+        <div style={{ fontSize: 10, fontWeight: 700, color: DS.accent, textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 10 }}>
+          METHODOLOGY NOTE
+        </div>
+        <p style={{ margin: 0, fontSize: 12.5, color: DS.text.secondary, lineHeight: 1.8 }}>
+          Log-linear MMM with saturation transforms (1 − e<sup style={{ fontSize: 9 }}>−spend/k</sup>) and geometric adstock
+          (channel-specific decay λ + lag). Baseline decomposition: intercept + trend + seasonality coefficients extracted directly
+          from the regression — not assumed ratios. This follows the standard MMM approach used by Meta Robyn, Google Meridian, and
+          PyMC-Marketing, where baseline is a model output (control variable coefficients), not an input assumption.
+          Chosen over plain linear (no diminishing returns), ridge/Robyn (similar transforms but less interpretable coefficients),
+          and full Bayesian/Meridian/PyMC-Marketing (powerful but over-parameterized for 104-week dataset).
+          Core parameters: saturation k (grid-searched per channel), adstock decay λ (0.05–0.35), and response coefficient β
+          (OLS-estimated). Model R² = {META.r2}. Optimization: marginal ROI equalization with minimum spend floors.
+          Built in Python (NumPy + Pandas). Production alternatives: Meta Robyn, Google Meridian, PyMC-Marketing.
+        </p>
+      </Card>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════
+// MAIN
+// ═══════════════════════════════════════════════════════
+
+export default function MarketingBudgetOptimizer() {
+  const [tab, setTab] = useState("briefing");
+
+  const tabs = [
+    { id: "briefing", label: "Executive Briefing" },
+    { id: "overview", label: "Overview" },
+    { id: "mmm", label: "MMM Results" },
+    { id: "optimizer", label: "Budget Optimizer" },
+    { id: "simulator", label: "Scenario Simulator" },
+    { id: "insights", label: "AI Insights" },
+  ];
+
+  return (
+    <div style={{ fontFamily: DS.font, background: DS.bg, minHeight: "100vh", padding: "32px 36px", maxWidth: 1100, margin: "0 auto" }}>
+      {/* Header */}
+      <div style={{ marginBottom: 28 }}>
+        <div style={{ fontSize: 10, fontWeight: 600, color: DS.text.tertiary, textTransform: "uppercase", letterSpacing: 2, marginBottom: 6 }}>
+          MARKETING MIX MODEL
+        </div>
+        <h1 style={{ margin: 0, fontSize: 26, fontWeight: 700, color: DS.text.primary, letterSpacing: -0.5 }}>
+          Media Budget Optimization
+        </h1>
+        <p style={{ margin: "6px 0 0", fontSize: 13, color: DS.text.tertiary }}>
+          {META.brand} · {META.brandSub} · {META.period}
+        </p>
+      </div>
+
+      {/* KPI Strip */}
+      <Card style={{ padding: "22px 28px", marginBottom: 24 }}>
+        <div style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
+          <KPI label="Total Revenue" value={fmt(META.totalRevenue)} sub="2-year period" />
+          <KPI label="Media Spend" value={fmt(META.totalSpend)} sub={`${fmt(META.weeklyBudget)}/week`} />
+          <KPI label="Overall ROAS" value={`${META.roas}x`} color={DS.accent} sub="Revenue per $1 spent" />
+          <KPI label="Model Fit (R²)" value={META.r2.toFixed(3)} color={DS.channels["Paid Social"]} sub="Variance explained" />
+          <KPI label="Optimization Lift" value={`+${META.liftPct}%`} color={DS.positive} sub="Same budget, better mix" />
+        </div>
+      </Card>
+
+      {/* Tab Nav */}
+      <div style={{ display: "flex", gap: 4, marginBottom: 24, borderBottom: `1px solid ${DS.border}`, paddingBottom: 0 }}>
+        {tabs.map(t => (
+          <button key={t.id} onClick={() => setTab(t.id)} style={{
+            padding: "10px 18px", fontSize: 13, fontWeight: tab === t.id ? 600 : 400, cursor: "pointer",
+            border: "none", borderBottom: tab === t.id ? `2px solid ${DS.accent}` : "2px solid transparent",
+            background: "transparent", color: tab === t.id ? DS.accent : DS.text.tertiary,
+            fontFamily: DS.font, transition: "all 0.15s",
+          }}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Content */}
+      {tab === "briefing" && <BriefingTab />}
+      {tab === "overview" && <OverviewTab />}
+      {tab === "mmm" && <MMMTab />}
+      {tab === "optimizer" && <OptimizerTab />}
+      {tab === "simulator" && <SimulatorTab />}
+      {tab === "insights" && <InsightsTab />}
+
+      {/* Footer */}
+      <div style={{ marginTop: 40, paddingTop: 16, borderTop: `1px solid ${DS.border}`, textAlign: "center" }}>
+        <p style={{ margin: 0, fontSize: 11, color: DS.text.tertiary, letterSpacing: 0.3 }}>
+          Built by Freena Wang · Simulated data for demonstration · Python + React · AI-augmented analysis
+        </p>
+      </div>
+    </div>
+  );
+}
