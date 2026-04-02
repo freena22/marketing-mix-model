@@ -22,8 +22,14 @@
       #root > div > div:nth-child(2) > div > div { min-width: 100px !important; }
       #root > div > div:nth-child(2) > div > div > div:nth-child(2) { font-size: 20px !important; }
 
-      /* Tab nav: scrollable */
-      #root [style*="gap: 4px"] { overflow-x: auto; -webkit-overflow-scrolling: touch; flex-wrap: nowrap !important; }
+      /* Tab nav: scrollable with fade hint */
+      #root [style*="gap: 4px"][style*="border-bottom"] {
+        overflow-x: auto; -webkit-overflow-scrolling: touch; flex-wrap: nowrap !important;
+        -ms-overflow-style: none; scrollbar-width: none;
+        mask-image: linear-gradient(to right, black 85%, transparent 100%);
+        -webkit-mask-image: linear-gradient(to right, black 85%, transparent 100%);
+      }
+      #root [style*="gap: 4px"][style*="border-bottom"]::-webkit-scrollbar { display: none; }
       #root [style*="gap: 4px"] button { padding: 8px 12px !important; font-size: 11px !important; white-space: nowrap; flex-shrink: 0; }
 
       /* Cards: reduce padding */
@@ -34,9 +40,13 @@
       #root [style*="grid-template-columns: 3fr 1fr"],
       #root [style*="grid-template-columns: 1fr 280px"],
       #root [style*="grid-template-columns: 1fr 300px"],
-      #root [style*="grid-template-columns: repeat(3"],
-      #root [style*="grid-template-columns: repeat(6"] {
+      #root [style*="grid-template-columns: repeat(3"] {
         grid-template-columns: 1fr !important;
+      }
+      /* Channel cards: 2-col grid on mobile */
+      #root [style*="grid-template-columns: repeat(6"] {
+        grid-template-columns: 1fr 1fr !important;
+        gap: 8px !important;
       }
 
       /* Recharts containers */
@@ -115,7 +125,7 @@ const DS = {
     "Display":        "#D4A24E",  // warm amber
     "Email":          "#4E9A6D",  // medium sage
     "TV / OTT":       "#C45B4F",  // warm red clay
-    "Affiliate":      "#D48A52",  // burnt orange
+    "Affiliate":      "#2AA198",  // teal
     "Organic Search": "#8C8C8C",  // neutral
     "Direct":         "#B0B0B0",  // light neutral
   },
