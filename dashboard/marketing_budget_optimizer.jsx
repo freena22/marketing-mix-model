@@ -597,8 +597,7 @@ function MMMTab() {
               <LineChart data={overallData}>
                 <CartesianGrid strokeDasharray="3 3" stroke={DS.borderLight} vertical={false} />
                 <XAxis dataKey="pct" tick={{ fontSize: 11, fill: DS.text.tertiary }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fontSize: 11, fill: DS.text.tertiary }} tickFormatter={v => fmt(v)} axisLine={false} tickLine={false}
-                  label={{ value: "Weekly Revenue Response", angle: -90, position: "insideLeft", offset: 10, fontSize: 11, fill: DS.text.tertiary }} />
+                <YAxis tick={{ fontSize: 11, fill: DS.text.tertiary }} tickFormatter={v => fmt(v)} axisLine={false} tickLine={false} />
                 <Tooltip content={<ChartTooltip />} />
                 <Legend wrapperStyle={{ fontSize: 12 }} />
                 {CHANNELS.map(ch => (
