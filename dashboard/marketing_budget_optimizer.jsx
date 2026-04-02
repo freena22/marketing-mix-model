@@ -33,7 +33,7 @@ const DS = {
     "Display":        "#D4A24E",  // warm amber
     "Email":          "#4E9A6D",  // medium sage
     "TV / OTT":       "#C45B4F",  // warm red clay
-    "Affiliate":      "#2AA198",  // teal
+    "Affiliate":      "#2C2C2C",  // black
     "Organic Search": "#8C8C8C",  // neutral
     "Direct":         "#B0B0B0",  // light neutral
   },

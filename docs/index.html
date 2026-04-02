@@ -67,6 +67,25 @@
 
       /* Table: horizontal scroll */
       table { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+      /* Recharts built-in legends */
+      .recharts-legend-wrapper { font-size: 10px !important; }
+      .recharts-legend-item { margin-right: 8px !important; }
+
+      /* Custom flex-wrap legends (pie charts, decomposition) */
+      #root [style*="flexWrap"][style*="gap"] {
+        gap: 6px 14px !important;
+        font-size: 10px !important;
+      }
+
+      /* Decomposition chart legend row */
+      #root [style*="borderTop"][style*="flexWrap"] {
+        flex-wrap: wrap !important;
+        gap: 6px 12px !important;
+      }
+      #root [style*="borderTop"][style*="flexWrap"] > div {
+        font-size: 10px !important;
+      }
     }
   </style>
 </head>
@@ -125,7 +144,7 @@ const DS = {
     "Display":        "#D4A24E",  // warm amber
     "Email":          "#4E9A6D",  // medium sage
     "TV / OTT":       "#C45B4F",  // warm red clay
-    "Affiliate":      "#2AA198",  // teal
+    "Affiliate":      "#2C2C2C",  // black
     "Organic Search": "#8C8C8C",  // neutral
     "Direct":         "#B0B0B0",  // light neutral
   },
