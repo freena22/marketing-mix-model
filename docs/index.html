@@ -10,6 +10,54 @@
     body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; background: #F7F6F3; }
     input[type="range"] { cursor: pointer; }
     input[type="range"]::-webkit-slider-thumb { cursor: pointer; }
+
+    @media (max-width: 768px) {
+      #root > div { padding: 16px 12px !important; max-width: 100% !important; }
+      #root h1 { font-size: 20px !important; }
+      #root h2 { font-size: 18px !important; }
+      #root h3 { font-size: 13px !important; }
+
+      /* KPI strip: wrap into 2-col grid */
+      #root > div > div:nth-child(2) > div { gap: 12px !important; }
+      #root > div > div:nth-child(2) > div > div { min-width: 100px !important; }
+      #root > div > div:nth-child(2) > div > div > div:nth-child(2) { font-size: 20px !important; }
+
+      /* Tab nav: scrollable */
+      #root [style*="gap: 4px"] { overflow-x: auto; -webkit-overflow-scrolling: touch; flex-wrap: nowrap !important; }
+      #root [style*="gap: 4px"] button { padding: 8px 12px !important; font-size: 11px !important; white-space: nowrap; flex-shrink: 0; }
+
+      /* Cards: reduce padding */
+      #root [style*="border-radius: 14px"] { padding: 16px !important; }
+
+      /* All grids: force single column on mobile */
+      #root [style*="grid-template-columns: 1fr 1fr"],
+      #root [style*="grid-template-columns: 3fr 1fr"],
+      #root [style*="grid-template-columns: 1fr 280px"],
+      #root [style*="grid-template-columns: 1fr 300px"],
+      #root [style*="grid-template-columns: repeat(3"],
+      #root [style*="grid-template-columns: repeat(6"] {
+        grid-template-columns: 1fr !important;
+      }
+
+      /* Recharts containers */
+      .recharts-responsive-container { min-height: 200px; }
+
+      /* Pill buttons: smaller on mobile */
+      #root button[style*="border-radius: 20px"] { padding: 5px 10px !important; font-size: 10px !important; }
+
+      /* Scenario buttons */
+      #root button[style*="flex: 1 1 150px"] { flex: 1 1 100% !important; }
+
+      /* Dark banner cards */
+      #root [style*="padding: 24px 32px"] { padding: 16px 18px !important; }
+      #root [style*="padding: 32px 36px"] { padding: 20px 16px !important; }
+      #root [style*="padding: 28px 32px"] { padding: 18px 16px !important; }
+      #root [style*="font-size: 26"] { font-size: 18px !important; }
+      #root [style*="font-size: 22"] { font-size: 17px !important; }
+
+      /* Table: horizontal scroll */
+      table { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    }
   </style>
 </head>
 <body>
