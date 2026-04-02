@@ -1,6 +1,6 @@
-# Methodology: Mathematical Specification
+# Methodology: Bayesian Marketing Mix Model
 
-This document details the mathematical framework behind the Marketing Mix Model, covering model formulation, parameter estimation, baseline decomposition, and budget optimization.
+This document details the mathematical framework behind the Bayesian Marketing Mix Model, covering model formulation, Bayesian estimation, baseline decomposition, and uncertainty-aware budget optimization. The model is implemented using [PyMC-Marketing](https://www.pymc-marketing.io/), a probabilistic programming library purpose-built for media mix modeling.
 
 ---
 
@@ -14,112 +14,161 @@ Total weekly revenue is modeled as the sum of a baseline component and media con
 Revenue(t) = Baseline(t) + Σ_c MediaContribution_c(t) + ε(t)
 ```
 
-where `c ∈ {Paid Search, Paid Social, Display, Email, TV/OTT, Affiliate}`, and `ε(t) ~ N(0, σ²)`.
+where `c ∈ {Paid Search, Paid Social, Display, Email, TV/OTT, Affiliate}`, and `ε(t) ~ Normal(0, σ²)`.
+
+This top-level structure is identical to a classical MMM. The critical difference lies in *how* the transform parameters, response coefficients, and noise variance are estimated — jointly, probabilistically, and with principled uncertainty quantification.
 
 ### 1.2 Saturation Transform
 
-Each channel's spend exhibits diminishing returns, modeled with an exponential saturation function:
+Each channel's spend exhibits diminishing returns, modeled with PyMC-Marketing's `LogisticSaturation`:
 
 ```
-Sat(spend, k) = 1 − exp(−spend / k)
+Sat(x, λ) = 1 − exp(−λx)
 ```
 
-where `k` is the channel-specific half-saturation constant. This function maps `[0, ∞)` to `[0, 1)`:
+where `λ` is a channel-specific saturation rate parameter **learned from data** (not hardcoded). This function maps `[0, ∞)` to `[0, 1)`:
 
-- At `spend = 0`: `Sat = 0` (no response)
-- At `spend = k`: `Sat ≈ 0.632` (63.2% of maximum response)
-- As `spend → ∞`: `Sat → 1` (full saturation)
+- At `x = 0`: `Sat = 0` (no response)
+- At `x = 1/λ`: `Sat ≈ 0.632` (63.2% of maximum response)
+- As `x → ∞`: `Sat → 1` (full saturation)
 
 The marginal response at any spend level is:
 
 ```
-∂Sat/∂spend = (1/k) · exp(−spend / k)
+∂Sat/∂x = λ · exp(−λx)
 ```
 
-This monotonically decreasing derivative is the mathematical basis for diminishing returns — each additional dollar of spend produces less incremental response than the previous one.
-
-**Why this functional form?** The exponential saturation is the most common specification in industry MMMs (used by Analytic Partners' GPS-E, and as the default in both Meta Robyn and Google Meridian). Alternatives include the Hill function `Sat(x) = x^α / (x^α + k^α)` (used in PyMC-Marketing) which offers more flexibility in curve shape via the shape parameter α, at the cost of an additional parameter to estimate.
+The key departure from the OLS approach: `λ` is no longer a fixed constant chosen via grid search. It carries a prior distribution `λ ~ Gamma(3, 1)` and is estimated jointly with all other model parameters during MCMC sampling. This means the model's uncertainty about the *shape* of the response curve propagates into every downstream quantity — contribution estimates, ROI, and optimal allocations.
 
 ### 1.3 Geometric Adstock
 
-Media spend has carryover effects — today's ad exposure continues to influence purchasing behavior in future weeks. This is modeled with geometric adstock:
+Media spend has carryover effects — this week's ad exposure continues to influence purchasing behavior in future weeks. This is modeled with PyMC-Marketing's `GeometricAdstock`:
 
 ```
-Adstock(t) = Spend(t − lag) + λ · Adstock(t − 1)
+Adstock(t) = Σ_{l=0}^{l_max} α^l · Spend(t − l)   (normalized to sum to 1)
 ```
 
 where:
 
-- `lag` = channel-specific lag (weeks before peak effect). TV/OTT has the longest lag (2 weeks) due to awareness-to-action conversion time.
-- `λ` = decay rate ∈ [0, 1). Higher values mean longer-lasting effects.
+- `α` = decay rate ∈ [0, 1), **learned per channel** (prior: `Beta(1, 3)`)
+- `l_max = 10` = maximum lag window (weeks)
+- `normalize = True` = adstock weights sum to 1, preserving the scale of spend
 
-The effective half-life of a media exposure under geometric decay is:
+The `Beta(1, 3)` prior on α places more mass near zero, encoding a mild expectation that most media effects decay quickly while still allowing the data to push toward longer carryover when the evidence supports it. The effective half-life under geometric decay is:
 
 ```
-Half-life = −ln(2) / ln(λ)
+Half-life = −ln(2) / ln(α)
 ```
 
-| Channel | Lag | Decay (λ) | Half-life |
-|---|---|---|---|
-| Paid Search | 0 weeks | 0.10 | 0.3 weeks |
-| Paid Social | 0 weeks | 0.15 | 0.4 weeks |
-| Display | 1 week | 0.30 | 0.8 weeks |
-| Email | 0 weeks | 0.05 | 0.1 weeks |
-| TV / OTT | 2 weeks | 0.35 | 1.0 weeks |
-| Affiliate | 0 weeks | 0.08 | 0.2 weeks |
+Unlike the OLS specification where each channel's lag and decay were fixed *a priori*, the Bayesian model learns decay rates from data. The posterior distribution on α directly quantifies how confident the model is in each channel's carryover window.
 
 ### 1.4 Full Model Specification
 
-Combining saturation and adstock, the full regression model is:
+Combining saturation, adstock, controls, and seasonality, the full model is:
 
 ```
-log(Revenue(t)) ≈ β₀ + β_trend · t̃ + β_sin · sin(2πt/52) + β_cos · cos(2πt/52)
-                   + β_nov · 𝟙(Nov) + β_dec · 𝟙(Dec)
-                   + Σ_c β_c · Sat(Adstock_c(t), k_c)
+y_scaled(t) = intercept
+             + Σ_c β_c · Sat(Adstock(x_c(t), α_c), λ_c)
+             + γ_nov · 𝟙(Nov) + γ_dec · 𝟙(Dec) + γ_trend · t̃
+             + Σ_{m=1}^{2} [γ_sin_m · sin(2πmt/52) + γ_cos_m · cos(2πmt/52)]
+             + ε(t)
 ```
 
 where:
 
-- `β₀` = intercept (baseline floor)
-- `β_trend · t̃` = linear trend (t̃ normalized to [0, 1] over 104 weeks)
-- `β_sin, β_cos` = annual seasonality (Fourier terms at 52-week period)
-- `β_nov, β_dec` = holiday indicator variables
-- `β_c` = channel response coefficient (revenue at full saturation)
-- `Sat(Adstock_c(t), k_c)` = transformed spend for channel c
+- `y_scaled` = MaxAbsScaler-transformed weekly revenue
+- `intercept` = baseline revenue floor
+- `β_c` = channel response coefficient (revenue contribution at full saturation)
+- `Sat(Adstock(·))` = composed saturation-over-adstock transform with learned parameters
+- `γ_nov, γ_dec` = binary holiday control coefficients
+- `γ_trend · t̃` = linear trend (t̃ normalized to [0, 1])
+- `Σ Fourier` = 2-mode annual seasonality (4 Fourier terms at periods 52 and 26 weeks), configured via PyMC-Marketing's `yearly_seasonality=2`
+- `ε(t) ~ Normal(0, σ²)` = observation noise
 
-In practice, the estimation is performed in the linear domain on the transformed features (OLS), not as a non-linear optimization. The non-linearity is handled by the pre-regression transforms (saturation + adstock), keeping the estimation stage interpretable and stable.
+All channel spend variables `x_c` and the target `y` are scaled using `MaxAbsScaler`, handled internally by PyMC-Marketing's `MMM` class. This ensures numerically stable MCMC sampling without manual preprocessing.
 
 ---
 
-## 2. Parameter Estimation
+## 2. Bayesian Estimation
 
-### 2.1 Two-Phase Approach
+### 2.1 Why Bayesian Over OLS
 
-**Phase 1: Transform parameters (k, lag, λ) — Grid search**
+The previous OLS implementation used a two-phase approach: grid search for transform parameters (k, lag, λ), then closed-form regression for coefficients (β). While computationally fast, this approach has fundamental limitations that Bayesian estimation resolves:
 
-Saturation constants and adstock parameters are estimated via grid search over the response surface. For each candidate parameter set, the transformed features are constructed and the model R² is evaluated. This is equivalent to profile likelihood estimation.
+| Limitation of OLS | Bayesian Solution |
+|---|---|
+| No uncertainty on transform parameters — k and λ were point estimates from grid search | α, λ estimated jointly with β; full posterior distributions on all parameters |
+| Negative coefficients possible (required post-hoc clamping) | `HalfNormal` priors on β_c naturally constrain media effects to be non-negative |
+| Transform parameters disconnected from coefficient estimation | Joint estimation means uncertainty in α and λ propagates correctly into β and downstream metrics |
+| Point estimates only — no confidence intervals on ROI or optimal budget | Posterior distributions enable probabilistic optimization with credible intervals |
 
-**Phase 2: Response coefficients (β) — OLS**
+In short: every number the model produces now comes with a calibrated uncertainty estimate, and the model's structure encodes domain knowledge (media effects are non-negative, decay is usually fast) without sacrificing flexibility.
 
-Given the optimal transforms, channel coefficients and control variable weights are estimated via ordinary least squares:
+### 2.2 Prior Specification
 
+Priors encode domain knowledge while remaining flexible enough for the data to dominate:
+
+**Adstock decay:**
 ```
-β̂ = (X'X)⁻¹ X'y
+α_c ~ Beta(1, 3)    per channel
+```
+Weakly favors lower decay (faster carryover dissipation). Mean = 0.25, allowing the posterior to concentrate anywhere in [0, 1) if the data warrants it.
+
+**Saturation rate:**
+```
+λ_c ~ Gamma(3, 1)    per channel
+```
+Weakly informative with mean = 3. Permits a wide range of saturation curve shapes, from near-linear (λ ≈ 0) to rapidly saturating (λ >> 1).
+
+**Channel response coefficients:**
+```
+β_c ~ HalfNormal(σ = n_channels × spend_share_c)    per channel
+```
+The `HalfNormal` support on [0, ∞) enforces non-negative media effects by construction — no post-hoc clamping needed. The scale is informed by each channel's share of total spend, encoding the reasonable prior that channels receiving more budget are likely responsible for proportionally more revenue.
+
+**Intercept and controls:**
+```
+intercept ~ Normal(0, 2)
+γ_control ~ Normal(0, 2)       (trend, is_nov, is_dec)
+γ_fourier ~ Laplace(0, 1)      (Fourier seasonality terms)
+```
+The `Laplace` prior on Fourier terms provides mild L1 regularization, encouraging sparse seasonality — the model can shrink unneeded harmonic modes toward zero rather than overfitting to noise.
+
+**Likelihood:**
+```
+y_scaled(t) ~ Normal(μ(t), σ)
+σ ~ HalfNormal(2)
 ```
 
-where `X` is the design matrix of transformed features and `y` is the revenue vector.
+### 2.3 MCMC Sampling
 
-**Model fit:** R² = 0.993, indicating 99.3% of weekly revenue variance is explained by the model.
+The posterior is approximated via the No-U-Turn Sampler (NUTS), an adaptive variant of Hamiltonian Monte Carlo:
 
-### 2.2 Why OLS Over Bayesian?
+| Setting | Value | Rationale |
+|---|---|---|
+| Chains | 4 | Enables R-hat convergence diagnostics |
+| Warmup draws | 1,500 | Sufficient for NUTS adaptation (step size, mass matrix) |
+| Posterior draws | 1,000 | 4,000 total draws provides stable posterior summaries |
+| `target_accept` | 0.9 | Higher acceptance reduces divergences in funnel geometries |
 
-For this dataset (104 observations, 12 parameters), OLS is preferred over full Bayesian MCMC for three reasons:
+Total computational cost: ~1–3 minutes on a modern CPU (vs. < 1 second for OLS). This is a one-time cost that buys calibrated uncertainty across all downstream analyses.
 
-1. **Sample size:** 104 weeks is sufficient for OLS but marginal for Bayesian estimation without strong priors. Weakly informative priors would dominate the posterior, making results prior-dependent.
-2. **Interpretability:** OLS coefficients have a direct interpretation as marginal effects. Bayesian posteriors require additional summarization (credible intervals, posterior predictive checks).
-3. **Transparency:** For a stakeholder-facing analysis, the ability to say "each additional dollar of Email spend at current levels generates $X in revenue" is more actionable than probability distributions.
+### 2.4 Data Scaling
 
-A production implementation with more data (200+ weeks, geo-level variation) would benefit from Bayesian methods — specifically PyMC-Marketing or Google Meridian, which provide uncertainty quantification and principled regularization.
+PyMC-Marketing's `MMM` class applies `MaxAbsScaler` internally to both channel spend variables and the target. This maps all values to [−1, 1], ensuring:
+
+- NUTS operates on a well-conditioned posterior geometry
+- Prior scales are interpretable (priors are set in scaled space)
+- Posterior means are automatically inverse-transformed for reporting
+
+### 2.5 Convergence Diagnostics
+
+Every model fit is validated against four diagnostic criteria:
+
+1. **R-hat < 1.01** for all parameters — confirms chains have converged to the same stationary distribution
+2. **Zero divergences** — divergent transitions indicate the sampler failed to explore some region of the posterior, biasing estimates
+3. **Effective sample size (ESS) > 400** — ensures posterior summaries are reliable (bulk ESS for means, tail ESS for intervals)
+4. **Posterior predictive checks** — simulated data from the posterior should visually and statistically resemble observed data (calibration, coverage)
 
 ---
 
@@ -130,31 +179,30 @@ A production implementation with more data (200+ weeks, geo-level variation) wou
 The baseline is the model's predicted revenue when all media spend is set to zero:
 
 ```
-Baseline(t) = β₀ + β_trend · t̃ + β_sin · sin(2πt/52) + β_cos · cos(2πt/52)
-              + β_nov · 𝟙(Nov) + β_dec · 𝟙(Dec)
+Baseline(t) = intercept + γ_trend · t̃ + γ_nov · 𝟙(Nov) + γ_dec · 𝟙(Dec)
+             + Σ_{m=1}^{2} [γ_sin_m · sin(2πmt/52) + γ_cos_m · cos(2πmt/52)]
 ```
 
 This is a **model output**, not an input assumption. It represents the revenue that would exist from organic demand, brand equity, seasonality, and macro trends even without any paid media.
 
 ### 3.2 Components
 
-| Component | Coefficient | Interpretation |
-|---|---|---|
-| Intercept (β₀) | $108,122/week | Constant revenue floor |
-| Trend (β_trend) | $25,875 total growth | Linear growth over 2 years |
-| Seasonality (sin/cos) | ±$12K amplitude | Annual cyclicality |
-| November (β_nov) | +$60,399 | Holiday shopping lift |
-| December (β_dec) | +$81,731 | Peak holiday season |
+| Component | Description |
+|---|---|
+| Intercept | Constant revenue floor — the minimum organic demand |
+| Trend | Linear growth/decline over the observation window |
+| Seasonality (Fourier) | Annual cyclicality captured by 2-mode Fourier terms (52-week and 26-week periods) |
+| Holiday indicators | Discrete lifts for November (pre-holiday) and December (peak holiday) |
 
-**Average baseline:** $132,779/week (16.2% of total predicted revenue)
+### 3.3 Credible Intervals
 
-### 3.3 Why This Matters
+Because every coefficient is a posterior distribution, the baseline itself is a distribution at each time point. Reporting includes:
 
-The baseline share indicates media dependency. At 16.2%, ShopNova is heavily media-dependent — 83.8% of revenue is directly attributable to paid channels. This means:
+- **Posterior mean** baseline trajectory
+- **90% highest density interval (HDI)** — the narrowest interval containing 90% of posterior mass
+- **Baseline share of total revenue** with uncertainty bounds
 
-- Budget cuts will impact topline disproportionately
-- Organic growth investments (SEO, content, CRM) should be prioritized to increase baseline resilience
-- The healthy upward trend ($108K → $134K over 2 years) suggests growing brand equity
+This answers a question OLS could not: *How confident are we in the baseline level?* If the HDI is wide, the split between organic and paid revenue is uncertain — a critical caveat for strategic decisions about media dependency.
 
 ---
 
@@ -165,36 +213,44 @@ The baseline share indicates media dependency. At 16.2%, ShopNova is heavily med
 Maximize total media-attributable revenue subject to a fixed budget constraint:
 
 ```
-max     Σ_c β_c · Sat(spend_c, k_c)
+max     Σ_c β_c · Sat(Adstock(spend_c, α_c), λ_c)
 s.t.    Σ_c spend_c = B          (total budget)
         spend_c ≥ f_c · B        (minimum floor per channel)
 ```
 
-where `B = $175,000/week` and `f_c` is the minimum allocation fraction for channel c.
+where `B` is the total weekly budget and `f_c` is the minimum allocation fraction for channel c.
 
 ### 4.2 Optimality Condition
 
-At the optimum, the marginal ROI is equalized across all channels that are not at their floor:
+At the optimum, the marginal ROI is equalized across all unconstrained channels:
 
 ```
-∂Response_c / ∂spend_c = (β_c / k_c) · exp(−spend_c / k_c) = μ    for all c not at floor
+β_c · λ_c · exp(−λ_c · Adstock(spend_c)) = μ    for all c not at floor
 ```
 
-where `μ` is the shadow price of the budget constraint. Channels at their minimum floor have marginal ROI below `μ` — they would receive less budget if the floor were removed.
+where `μ` is the shadow price of the budget constraint. Channels at their minimum floor have marginal ROI below `μ`.
 
-### 4.3 Algorithm
+### 4.3 Learned Response Functions
 
-The optimizer uses a greedy marginal allocation approach:
+The response function for each channel uses **posterior mean** estimates of α, λ, and β:
 
-1. Initialize all channels at their minimum floor: `spend_c = f_c · B`
-2. Compute remaining budget: `R = B − Σ_c f_c · B`
-3. Divide `R` into 800 incremental steps
-4. For each step, allocate to the channel with the highest current marginal return
-5. Repeat until budget is exhausted
+```
+Response_c(spend) = β̂_c · Sat(Adstock(spend, α̂_c), λ̂_c)
+```
 
-This greedy approach converges to the equi-marginal optimum because the saturation function is concave — marginal returns are strictly decreasing.
+These parameters were learned jointly from data — not grid-searched or hardcoded. This means the response curves reflect what the data actually supports, regularized by domain-informed priors.
 
-### 4.4 Minimum Spend Floors
+### 4.4 Uncertainty-Aware Optimization
+
+The optimizer is run not just on posterior means, but across posterior samples to produce:
+
+1. **Lift distribution** — run the allocation optimizer on each posterior draw, producing a distribution of expected lift values
+2. **90% credible interval on lift** — the range within which the true lift falls with 90% probability
+3. **P(lift > 0)** — the posterior probability that the optimized allocation outperforms the current allocation
+
+This is the decisive advantage over deterministic optimization: stakeholders can see not just "the model recommends X" but "the model is 94% confident that X outperforms the status quo, with expected lift between 8% and 31%."
+
+### 4.5 Minimum Spend Floors
 
 Floors prevent unrealistic allocations and reflect business constraints:
 
@@ -207,39 +263,67 @@ Floors prevent unrealistic allocations and reflect business constraints:
 | TV / OTT | 22% | Brand building minimum viable presence |
 | Affiliate | 6% | Partnership commitments |
 
-### 4.5 Results
+---
 
-The optimization projects a **+24.4% lift** in media-attributable revenue ($534,821 → $665,465/week) through reallocation alone. The primary drivers:
+## 5. Advantages Over OLS Approach
 
-- **Email:** 4% → 17% of budget (+264%). At 12.8x ROI and 38% saturation, Email has the highest marginal return.
-- **Affiliate:** 7% → 16% of budget (+138%). At 7.2x ROI and 36% saturation, strong scaling headroom.
-- **TV/OTT:** 31% → 22% of budget (−30%). Hits the minimum floor — see limitations below.
+### 5.1 No Negative Coefficient Hack
+
+The OLS model could produce negative channel coefficients (implying that spending *more* on a channel *reduces* revenue), which were clamped to zero post-hoc. The Bayesian model uses `HalfNormal` priors on β_c, constraining media effects to be non-negative by construction. The prior is not a hack — it encodes the defensible assumption that paid media does not destroy revenue.
+
+### 5.2 Hyperparameters Learned From Data
+
+Under OLS, adstock decay (λ) and saturation constants (k) were selected via grid search — a discrete, disconnected optimization that ignores uncertainty. The Bayesian model estimates α and λ jointly with all other parameters, meaning:
+
+- The best-fit decay rate accounts for the response coefficient magnitude (and vice versa)
+- Uncertainty in the saturation shape propagates into contribution estimates
+- No arbitrary grid resolution limits the parameter space
+
+### 5.3 Full Uncertainty on Every Metric
+
+Every quantity the model produces — channel contributions, ROI, optimal allocations, baseline share — is a distribution, not a point estimate. This enables:
+
+- **Credible intervals** on ROI rankings (Is Email really higher-ROI than Affiliate, or is it within noise?)
+- **Probabilistic budget recommendations** (P(lift > 0) gives stakeholders a decision-grade confidence level)
+- **Sensitivity analysis for free** (the posterior width reveals which parameters the model is least certain about)
+
+### 5.4 Robust to Multicollinearity
+
+Media channels are often correlated (campaigns run simultaneously, budgets scale together). OLS is notoriously sensitive to multicollinearity — coefficient estimates become unstable, standard errors inflate, and signs can flip. Bayesian priors act as principled regularization, anchoring estimates toward domain-reasonable values while letting the data pull them away when evidence is strong.
 
 ---
 
-## 5. Limitations and Recommended Validation
+## 6. Limitations and Recommended Validation
 
-### 5.1 TV/OTT Undervaluation
+### 6.1 TV/OTT Undervaluation
 
 The model likely underestimates TV/OTT's true contribution due to:
 
 - **Brand halo:** TV drives branded search queries attributed to Paid Search
-- **Carryover truncation:** Geometric adstock with 35% decay captures ~2 weeks of effect; real awareness may persist for months
-- **Baseline absorption:** TV-driven organic demand is captured by the model's intercept and trend, not the TV coefficient
+- **Carryover truncation:** Even with learned adstock decay, geometric decay captures localized carryover; real awareness may persist for months
+- **Baseline absorption:** TV-driven organic demand is partially captured by the intercept and trend, not the TV coefficient
 
-**Recommended validation:** Run a geo-holdout test (dark TV in 2-3 DMAs for 8 weeks) and compare total market revenue — not just TV-attributed revenue.
+**Recommended validation:** Run a geo-holdout test (dark TV in 2–3 DMAs for 8 weeks) and compare total market revenue — not just TV-attributed revenue.
 
-### 5.2 Cross-Channel Interactions
+### 6.2 Cross-Channel Interactions
 
 The model assumes channel independence (additive contributions). In reality, channels interact: TV builds awareness that Search captures, Social engagement primes Email opens, Display retargets across the funnel. Cutting one channel may degrade another's apparent performance.
 
-**Recommended approach:** Phase budget changes gradually (10-15% per sprint), monitoring cross-channel metrics (branded search volume, email open rates, direct traffic) as leading indicators of halo degradation.
+**Recommended approach:** Phase budget changes gradually (10–15% per sprint), monitoring cross-channel metrics (branded search volume, email open rates, direct traffic) as leading indicators of halo degradation.
 
-### 5.3 Synthetic Data
+### 6.3 Synthetic Data
 
 This analysis uses simulated data with known ground-truth parameters. A production implementation would require:
 
-- Actual spend and revenue data (ideally with geo-level variation for Meridian)
+- Actual spend and revenue data (ideally with geo-level variation)
 - External validation via incrementality tests (geo-holdout, lift studies)
 - Out-of-sample testing (train on 80 weeks, validate on 24)
-- Sensitivity analysis on saturation constants and adstock parameters
+- Prior sensitivity analysis (run the model under alternative prior specifications to assess robustness)
+
+### 6.4 MCMC Computational Cost
+
+Bayesian estimation via NUTS requires ~1–3 minutes per model fit (vs. < 1 second for OLS). This is negligible for a weekly reporting cadence but relevant for:
+
+- **Rapid iteration during model development** — consider using variational inference (`pm.fit()`) as a fast approximation during exploration, then switching to full MCMC for final estimates
+- **Large-scale grid searches** over model specifications — Bayesian model comparison (LOO-CV, WAIC) replaces brute-force grid search but still requires fitting each candidate model
+- **Real-time optimization dashboards** — pre-compute posterior samples and cache response curves; optimization itself is fast once posteriors are available

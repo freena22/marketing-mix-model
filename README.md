@@ -1,6 +1,6 @@
-# Marketing Mix Model: Media Budget Optimization
+# Marketing Mix Model: Bayesian Media Budget Optimization
 
-A full-stack Marketing Mix Model (MMM) for a simulated DTC retail e-commerce brand (**ShopNova**), built from scratch in Python with an interactive React dashboard. The model estimates channel-level incremental contribution, identifies diminishing returns, and optimizes budget allocation — projecting a **+24.4% revenue lift** without increasing total spend.
+A full-stack Bayesian Marketing Mix Model (MMM) for a simulated DTC retail e-commerce brand (**ShopNova**), built with **PyMC-Marketing** and an interactive React dashboard. The model learns channel-level adstock, saturation, and contribution parameters from data via MCMC sampling — producing uncertainty-aware budget recommendations with **credible intervals on every metric**.
 
 **Live Dashboard:** [View on GitHub Pages →](https://freena22.github.io/marketing-mix-model/)
 
@@ -8,20 +8,21 @@ A full-stack Marketing Mix Model (MMM) for a simulated DTC retail e-commerce bra
 
 ## What This Project Demonstrates
 
-This project replicates the kind of analysis a marketing analytics team would build internally or with a measurement partner. It covers the full workflow from data generation through model fitting, baseline decomposition, budget optimization, and stakeholder-ready visualization.
+This project replicates the kind of analysis a marketing analytics team would build internally or with a measurement partner. It covers the full workflow from data generation through Bayesian model fitting, posterior decomposition, uncertainty-aware budget optimization, and stakeholder-ready visualization.
 
 **Technical scope:**
 
-- Log-linear regression with saturation transforms and geometric adstock
-- Baseline decomposition extracted from model coefficients (not assumed)
-- Marginal ROI equalization for budget optimization with minimum spend constraints
-- Interactive 6-tab React dashboard with executive briefing, scenario simulator, and AI-generated insights
+- Bayesian MMM via PyMC-Marketing with GeometricAdstock and LogisticSaturation transforms
+- All parameters (adstock decay, saturation curves, channel betas) learned from data — no hardcoded values
+- MCMC sampling: 4 chains × 1,500 tuning + 1,000 draws, target_accept=0.9
+- 90% credible intervals (Bayesian HDI) on every reported metric
+- Uncertainty-aware budget optimization reporting P(lift > 0) and lift CIs
 
 **Business scope:**
 
 - 104 weeks of weekly channel-level spend and revenue across 6 paid media channels
-- Channel-specific saturation curves (k), carryover effects (decay + lag), and response coefficients (beta)
-- Actionable reallocation recommendations with phased implementation guidance
+- Posterior-derived saturation curves, carryover effects, and response coefficients per channel
+- Actionable reallocation recommendations with probabilistic confidence levels
 - Nuanced treatment of upper-funnel channels (TV/OTT) and cross-channel halo effects
 
 ---
@@ -31,13 +32,15 @@ This project replicates the kind of analysis a marketing analytics team would bu
 ```
 marketing-mix-model/
 ├── model/
-│   └── mmm_retail.py              # Full MMM pipeline: data gen → fit → optimize → export
+│   ├── mmm_retail.py                  # Original OLS pipeline (kept for reference)
+│   └── mmm_retail_bayesian.py         # Bayesian MMM: data gen → fit → optimize → export
 ├── dashboard/
-│   └── marketing_budget_optimizer.jsx   # Interactive React dashboard (6 tabs)
+│   └── marketing_budget_optimizer.jsx  # Interactive React dashboard (6 tabs)
 ├── data/
-│   └── dashboard_data.json        # Exported model results for dashboard consumption
+│   └── dashboard_data.json            # Exported model results for dashboard
 ├── docs/
-│   └── methodology.md             # Mathematical specification and design decisions
+│   ├── methodology.md                 # Mathematical specification
+│   └── index.html                     # Static standalone dashboard
 ├── requirements.txt
 └── README.md
 ```
@@ -52,35 +55,41 @@ marketing-mix-model/
 |---|---|
 | Time period | Jan 2024 – Dec 2025 (104 weeks) |
 | Paid channels | Paid Search, Paid Social, Display, Email, TV/OTT, Affiliate |
-| Weekly budget | $175,000 |
-| Total revenue | $85.2M |
-| Total media spend | $19.2M |
-| Overall ROAS | 4.4x |
+| Weekly budget | ~$175,000 |
+| Total revenue | ~$85M |
+| Total media spend | ~$19M |
+| Overall ROAS | ~4.4x |
 
 ### Approach
 
-**Model specification:** Log-linear regression with three key transformations applied before estimation:
+**Model specification:** Bayesian MMM via PyMC-Marketing with two channel-level transforms estimated jointly:
 
-1. **Saturation:** `1 − exp(−spend / k)` — captures diminishing returns at channel-specific inflection points
-2. **Adstock:** Geometric decay with channel-specific lag and decay rate — models carryover effects (e.g., TV/OTT: 2-week lag, 35% decay)
-3. **Controls:** Trend, annual seasonality (sin/cos), and holiday indicators (Nov/Dec) to isolate media impact
+1. **Adstock (GeometricAdstock):** Channel-specific decay α learned from data — models carryover effects where spend in week *t* continues generating revenue in subsequent weeks
+2. **Saturation (LogisticSaturation):** Channel-specific λ learned from data — captures diminishing returns as spend increases within each channel
+3. **Controls:** Linear trend, 2-mode Fourier seasonality (annual + semi-annual), and Nov/Dec holiday indicators to isolate media impact from organic patterns
 
-**Baseline decomposition:** The baseline (revenue with zero media spend) is extracted directly from the model's control variable coefficients: `Baseline = Intercept + Trend + Seasonality + Holiday`. This is a model output, not an input assumption — following the standard approach used by Meta Robyn, Google Meridian, and PyMC-Marketing.
+**Priors:**
 
-**Optimization:** Marginal ROI equalization with per-channel minimum spend floors. The optimizer iteratively allocates incremental budget to the channel with the highest marginal return until the total budget is exhausted.
+| Parameter | Prior | Rationale |
+|---|---|---|
+| Adstock α | Beta(1, 3) | Favors moderate-to-low carryover; most media effects decay within 2–3 weeks |
+| Saturation λ | Gamma(3, 1) | Weakly informative; allows data to determine inflection points |
+| Channel β | HalfNormal(σ = spend share) | Scales prior width to each channel's budget proportion |
+
+**Inference:** MCMC via PyMC (NUTS sampler) — 4 chains × 1,500 tuning steps + 1,000 posterior draws, target_accept=0.9 for stable sampling geometry.
+
+**Baseline decomposition:** The baseline (revenue attributable to non-media factors) is extracted from the posterior distributions of control variable coefficients: `Baseline = Intercept + Trend + Seasonality + Holiday`. This is a model output, not an input assumption — consistent with the decomposition approach used by Meta Robyn, Google Meridian, and PyMC-Marketing.
+
+**Optimization:** Uncertainty-aware marginal ROI equalization. The optimizer reports not just point-estimate lift but also 90% credible intervals on projected revenue change and P(lift > 0) for each reallocation scenario.
 
 ### Key Results
 
-| Channel | Current | Optimized | ROI | Saturation |
-|---|---|---|---|---|
-| Paid Search | $45,000/wk | $38,500/wk ↓ | 3.2x | 44% |
-| Paid Social | $35,000/wk | $28,000/wk ↓ | 3.4x | 44% |
-| Display | $20,000/wk | $12,250/wk ↓ | 2.7x | 32% |
-| Email | $8,000/wk | $29,138/wk ↑ | 12.8x | 38% |
-| TV / OTT | $55,000/wk | $38,500/wk ↓ | 1.5x | 35% |
-| Affiliate | $12,000/wk | $28,612/wk ↑ | 7.2x | 36% |
+Results follow the same directional pattern as the earlier OLS model, but every metric now carries a posterior distribution rather than a point estimate:
 
-**Projected lift:** +24.4% media-attributable revenue (~$6.8M/year) from reallocation alone.
+- Email and Affiliate remain the highest-ROI channels with the most headroom for increased investment
+- Paid Search and Paid Social show moderate saturation — candidates for reallocation
+- TV/OTT returns the lowest measured ROI, though structural undervaluation of upper-funnel channels is a known MMM limitation
+- Optimization lift is reported with credible intervals, giving stakeholders a probabilistic view of upside and downside scenarios
 
 ### Important Caveats
 
@@ -88,7 +97,8 @@ The model has known limitations that would need to be addressed in a production 
 
 - **TV/OTT undervaluation:** MMMs structurally undercount upper-funnel channels. TV drives branded search volume and direct traffic that gets attributed elsewhere. Geo-holdout tests are needed to validate.
 - **Cross-channel halo effects:** Channels interact (TV → Search intent, Social → Email engagement), but the model treats them independently. Budget cuts should be phased gradually and monitored for cross-channel degradation.
-- **Synthetic data:** The dataset is simulated with known ground-truth parameters. A real implementation would use actual spend/revenue data and require additional validation (out-of-sample testing, posterior predictive checks for Bayesian variants).
+- **Synthetic data:** The dataset is simulated with known ground-truth parameters. A real implementation would use actual spend/revenue data and require additional validation (out-of-sample testing, posterior predictive checks).
+- **Posterior convergence:** While the MCMC configuration (4 chains, high target_accept) is designed for reliable convergence, production use should verify R-hat < 1.01 and adequate effective sample sizes across all parameters.
 
 ---
 
@@ -112,11 +122,13 @@ The interactive dashboard is built with React and Recharts, designed with a mute
 ### Model (Python)
 
 ```bash
-pip install numpy pandas
-python model/mmm_retail.py
+pip install -r requirements.txt
+python model/mmm_retail_bayesian.py
 ```
 
-This generates `dashboard_data.json` with all model results.
+First run takes **1–3 minutes** (MCMC sampling). Outputs `data/dashboard_data.json` with all model results including posterior summaries and credible intervals.
+
+The original OLS pipeline is preserved at `model/mmm_retail.py` for reference and comparison.
 
 ### Dashboard (React)
 
@@ -138,15 +150,15 @@ Or deploy as a static page on GitHub Pages (instructions in docs).
 
 ## Industry Context
 
-This project mirrors the workflows of three widely-used open-source MMM frameworks:
+This project uses **PyMC-Marketing** — one of three widely-adopted open-source MMM frameworks:
 
 | Framework | Organization | Approach | Best For |
 |---|---|---|---|
 | [Robyn](https://github.com/facebookexperimental/Robyn) | Meta | Ridge + Nevergrad | Rapid iteration, automated hyperparameter tuning |
 | [Meridian](https://github.com/google/meridian) | Google | Bayesian + TFP | Geo-level data, uncertainty quantification |
-| [PyMC-Marketing](https://github.com/pymc-labs/pymc-marketing) | PyMC Labs | Bayesian + PyMC | Flexible custom extensions, largest community |
+| [**PyMC-Marketing**](https://github.com/pymc-labs/pymc-marketing) | PyMC Labs | **Bayesian + PyMC** | **Flexible custom extensions, largest community** |
 
-The custom implementation here uses the same core transforms (saturation + adstock) but keeps estimation as interpretable OLS — appropriate for the dataset size (104 weeks, 6 channels) and the project's emphasis on transparency.
+The implementation here builds on PyMC-Marketing's MMM primitives (GeometricAdstock, LogisticSaturation) while adding custom priors scaled to channel spend share, structured controls, and an uncertainty-aware optimization layer that propagates posterior uncertainty through to budget recommendations.
 
 ---
 
@@ -154,4 +166,4 @@ The custom implementation here uses the same core transforms (saturation + adsto
 
 **Freena Wang** — Senior Marketing & Product Analytics Professional
 
-Built as a portfolio project demonstrating end-to-end marketing measurement capabilities: from econometric modeling through interactive stakeholder communication.
+Built as a portfolio project demonstrating end-to-end Bayesian marketing measurement capabilities: from probabilistic modeling and MCMC inference through uncertainty-aware optimization and interactive stakeholder communication.
